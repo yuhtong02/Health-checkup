@@ -79,8 +79,8 @@
   .item-card.checked{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-light) inset;}
 
   /* Admin */
-  .pin-gate{max-width:340px;margin:60px auto;text-align:center;}
-  .pin-gate input{text-align:center;font-size:20px;letter-spacing:4px;}
+  .pin-gate{max-width:340px;width:100%;margin:60px auto;text-align:center;box-sizing:border-box;}
+  .pin-gate input{text-align:center;font-size:18px;letter-spacing:2px;}
   .admin-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px;flex-wrap:wrap;}
   .admin-tab{padding:9px 14px;font-size:13.5px;font-weight:700;color:var(--ink-soft);cursor:pointer;border-bottom:2px solid transparent;}
   .admin-tab.active{color:var(--primary-dark);border-bottom-color:var(--primary);}
@@ -133,8 +133,8 @@
     <div id="pinGate" class="pin-gate">
       <div class="panel">
         <div style="font-weight:700;margin-bottom:12px;">管理後台登入</div>
-      <div style="position:relative;">
-        <input type="password" id="pinInput" placeholder="請輸入管理密碼" maxlength="10" style="padding-right:40px;">
+      <div style="position:relative;width:100%;box-sizing:border-box;">
+        <input type="password" id="pinInput" placeholder="請輸入管理密碼" maxlength="10" style="width:100%;box-sizing:border-box;padding-right:40px;">
         <button type="button" id="pinToggle" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;padding:4px;">👁</button>
       </div>
         <button class="btn" id="pinSubmit" style="margin-top:12px;width:100%;">登入</button>
@@ -452,13 +452,15 @@ function renderDashboard(data) {
 
 let currentDateOptions = [];
 function loadRoster() {
-  callApi({ action: 'departments', pin: adminPin }).then(res => {
-    const sel = document.getElementById('deptFilter');
-    sel.innerHTML = '<option value="">全部部門</option>' + (res.depts||[]).map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
-  });
-  callApi({ action: 'dashboard', pin: adminPin }).then(res => { currentDateOptions = (res.dates||[]).map(d => d.date); });
   const dept = document.getElementById('deptFilter').value;
-  callApi({ action: 'roster', pin: adminPin, dept }).then(res => renderRoster(res.rows || []));
+  callApi({ action: 'rosterInit', pin: adminPin, dept }).then(res => {
+    currentDateOptions = (res.dashboard && res.dashboard.dates || []).map(d => d.date);
+    const sel = document.getElementById('deptFilter');
+    const currentVal = sel.value;
+    sel.innerHTML = '<option value="">全部部門</option>' + (res.depts||[]).map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+    sel.value = currentVal;
+    renderRoster(res.rows || []);
+  });
 }
 function renderRoster(rows) {
   const wrap = document.getElementById('rosterTableWrap');
@@ -559,13 +561,16 @@ function loadSettings() {
   callApi({ action: 'dashboard', pin: adminPin }).then(data => {
     const list = document.getElementById('settingsList');
     if (!data.dates || data.dates.length === 0) { list.innerHTML = '<div class="empty">尚未設定任何場次</div>'; return; }
-    list.innerHTML = data.dates.map(d => `
-      <div class="settings-row">
-        <span class="grow"><b>${escapeHtml(d.date)}</b>　已報名 ${d.count} 人</span>
-        <input type="number" min="1" value="${d.capacity}" data-date="${escapeHtml(d.date)}" class="capInput" style="width:80px;">
-        <button class="btn ghost small saveCapBtn" data-date="${escapeHtml(d.date)}">更新上限</button>
-        <button class="btn danger small delDateBtn" data-date="${escapeHtml(d.date)}">刪除場次</button>
-      </div>`).join('');
+  list.innerHTML = data.dates.map(d => `
+    <div class="settings-row">
+      <div class="grow">
+        <div style="font-weight:700;">${escapeHtml(d.date)}</div>
+        <div style="font-size:12px;color:var(--ink-soft);">已報名 ${d.count} 人</div>
+      </div>
+      <input type="number" min="1" value="${d.capacity}" data-date="${escapeHtml(d.date)}" class="capInput" style="width:80px;">
+      <button class="btn ghost small saveCapBtn" data-date="${escapeHtml(d.date)}">更新上限</button>
+      <button class="btn danger small delDateBtn" data-date="${escapeHtml(d.date)}">刪除場次</button>
+    </div>`).join('');
     document.querySelectorAll('.saveCapBtn').forEach(btn => {
       btn.addEventListener('click', () => {
         const date = btn.dataset.date;
@@ -592,13 +597,11 @@ document.getElementById('addDateBtn').addEventListener('click', () => {
 });
 
 function loadUnregistered() {
-  callApi({ action: 'employees', pin: adminPin }).then(res => {
-    document.getElementById('empPaste').value = (res.employees||[]).map(e => e.name + ',' + e.dept).join('\n');
-  });
   refreshUnregisteredTable();
 }
 function refreshUnregisteredTable() {
   callApi({ action: 'unregistered', pin: adminPin }).then(res => {
+    document.getElementById('empPaste').value = (res.employees||[]).map(e => e.name + ',' + e.dept).join('\n');
     const wrap = document.getElementById('unregTableWrap');
     const rows = res.unregistered || [];
     if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有名單，或全部人都已報名</div>'; return; }
