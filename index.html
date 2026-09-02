@@ -160,6 +160,7 @@
         <div class="admin-tab" data-view="unregistered">未報名提醒</div>
         <div class="admin-tab" data-view="items">健檢項目設定</div>
         <div class="admin-tab" data-view="selfpay">自費項目設定</div>
+        <div class="admin-tab" data-view="history">歷史紀錄</div>
       </div>
 
       <div id="dashboardView" class="admin-view">
@@ -256,6 +257,21 @@
           <div id="selfPayMsg"></div>
         </div>
         <div id="selfPayListWrap" style="margin-top:18px;"></div>
+      </div>
+
+      <div id="historyView" class="admin-view" style="display:none;">
+        <div class="panel">
+          <div style="font-weight:700;margin-bottom:8px;">封存目前名冊</div>
+          <div class="hint" style="margin-bottom:10px;">系統要重複使用（例如下一年度健檢）時，先把目前的報名資料封存成一個梯次，封存後目前名冊會清空、可以重新開始收單，但資料不會遺失，之後隨時可以在下方查閱或匯出。</div>
+          <div style="display:flex;gap:8px;">
+            <input id="archiveBatchName" placeholder="例如：115年度健檢" style="flex:1;">
+            <button class="btn danger" id="archiveBtn">封存並清空目前名冊</button>
+          </div>
+          <div id="archiveMsg"></div>
+        </div>
+        <div style="font-weight:700;margin:18px 0 10px;">過去梯次</div>
+        <div id="historyBatchList"></div>
+        <div id="historyRosterWrap" style="margin-top:14px;"></div>
       </div>
     </div>
   </div>
@@ -393,8 +409,10 @@ function loadSelfPayItemsAsync() {
     refreshAllSelfPaySelects();
   }).catch(() => {});
 }
+let mainPersonId = null;
 function refreshDeptSelectIfPresent() {
-  const sel = document.getElementById('fDept');
+  if (mainPersonId === null) return;
+  const sel = document.getElementById(`p${mainPersonId}_dept`);
   if (!sel) return;
   const depts = Array.from(new Set(employeeList.map(e => e.dept).filter(Boolean))).sort();
   const current = sel.value;
@@ -415,27 +433,17 @@ function ensureFormInitialized() {
   area.innerHTML = `
     <div class="sec-title"><span class="n">03</span> 填寫報名資料</div>
     <div class="panel">
-      <div class="field">
-        <label>部門 *</label>
-        <select id="fDept"><option value="">請選擇部門</option></select>
-        <input id="fDeptOther" placeholder="請輸入部門名稱" style="display:none;margin-top:6px;">
-        <div class="hint">此部門套用在整筆報名（含所有眷屬），用於名冊分類。</div>
-      </div>
       <div id="personsContainer"></div>
       <button type="button" class="btn ghost" id="addPersonBtn" style="margin-top:6px;">＋ 新增眷屬</button>
       <div class="field" style="margin-top:16px;"><label>備註（選填）</label><input id="fNote" placeholder="如有特殊需求請填寫"></div>
       <button class="btn" id="submitBtn" style="margin-top:6px;">確認報名</button>
       <div id="formMsg"></div>
     </div>`;
-  refreshDeptSelectIfPresent();
-  document.getElementById('fDept').addEventListener('change', () => {
-    const other = document.getElementById('fDept').value === '__other__';
-    document.getElementById('fDeptOther').style.display = other ? 'block' : 'none';
-  });
   document.getElementById('addPersonBtn').addEventListener('click', () => addPersonCard('眷屬'));
   document.getElementById('submitBtn').addEventListener('click', openConfirmModal);
 
   addPersonCard('本人');
+  refreshDeptSelectIfPresent();
 }
 
 function personDateOptionsHtml(selectedValue) {
@@ -457,6 +465,7 @@ function addPersonCard(identity) {
   selectedSelfPayByPerson[id] = [];
 
   const isMain = identity === '本人';
+  if (isMain) mainPersonId = id;
   const card = document.createElement('div');
   card.className = 'panel';
   card.id = `person_${id}`;
@@ -469,28 +478,33 @@ function addPersonCard(identity) {
     </div>
     <div class="row2">
       <div class="field"><label>姓名 *</label><input id="p${id}_name" autocomplete="off"></div>
-      <div class="field"><label>身份證字號 *</label><input id="p${id}_idnum" placeholder="A123456789"></div>
-    </div>
-    <div class="row2">
+      ${isMain ? `
       <div class="field">
-        <label>出生日期（民國年） *</label>
-        <div style="display:flex;gap:6px;">
-          <select id="p${id}_byear" style="width:33%;">
-            <option value="">年</option>
-            ${Array.from({length:100},(_,i)=>(new Date().getFullYear()-1911)-i).map(y=>`<option value="${y}">${y}</option>`).join('')}
-          </select>
-          <select id="p${id}_bmonth" style="width:33%;">
-            <option value="">月</option>
-            ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join('')}
-          </select>
-          <select id="p${id}_bday" style="width:34%;">
-            <option value="">日</option>
-            ${Array.from({length:31},(_,i)=>i+1).map(day=>`<option value="${day}">${day}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <div class="field"><label>手機號碼 *</label><input id="p${id}_phone" type="tel" placeholder="0912345678"></div>
+        <label>部門 *</label>
+        <select id="p${id}_dept"><option value="">請選擇部門</option></select>
+        <input id="p${id}_dept_other" placeholder="請輸入部門名稱" style="display:none;margin-top:6px;">
+      </div>` : `
+      <div class="field"><label>身份證字號 *</label><input id="p${id}_idnum" placeholder="A123456789"></div>`}
     </div>
+    ${isMain ? `<div class="field"><label>身份證字號 *</label><input id="p${id}_idnum" placeholder="A123456789"></div>` : ''}
+    <div class="field">
+      <label>出生日期（民國年） *</label>
+      <div style="display:flex;gap:6px;">
+        <select id="p${id}_byear" style="width:33%;">
+          <option value="">年</option>
+          ${Array.from({length:81},(_,i)=>35+i).map(y=>`<option value="${y}">${y}</option>`).join('')}
+        </select>
+        <select id="p${id}_bmonth" style="width:33%;">
+          <option value="">月</option>
+          ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join('')}
+        </select>
+        <select id="p${id}_bday" style="width:34%;">
+          <option value="">日</option>
+          ${Array.from({length:31},(_,i)=>i+1).map(day=>`<option value="${day}">${day}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="field"><label>手機號碼 *</label><input id="p${id}_phone" type="tel" placeholder="0912345678"></div>
     <div class="row2">
       <div class="field">
         <label>早餐（選填）</label>
@@ -530,10 +544,14 @@ function addPersonCard(identity) {
       const val = document.getElementById(`p${id}_name`).value.trim();
       const match = employeeList.find(e => e.name === val);
       if (match) {
-        const deptSel = document.getElementById('fDept');
+        const deptSel = document.getElementById(`p${id}_dept`);
         const hasOption = Array.from(deptSel.options).some(o => o.value === match.dept);
         if (hasOption) deptSel.value = match.dept;
       }
+    });
+    document.getElementById(`p${id}_dept`).addEventListener('change', () => {
+      const other = document.getElementById(`p${id}_dept`).value === '__other__';
+      document.getElementById(`p${id}_dept_other`).style.display = other ? 'block' : 'none';
     });
   }
   document.getElementById(`p${id}_selfpay_add`).addEventListener('click', () => {
@@ -590,8 +608,8 @@ let pendingPayload = null;
 
 function openConfirmModal() {
   const msg = document.getElementById('formMsg');
-  const deptSel = document.getElementById('fDept').value;
-  const dept = deptSel === '__other__' ? document.getElementById('fDeptOther').value.trim() : deptSel;
+  const deptSel = document.getElementById(`p${mainPersonId}_dept`).value;
+  const dept = deptSel === '__other__' ? document.getElementById(`p${mainPersonId}_dept_other`).value.trim() : deptSel;
   const note = document.getElementById('fNote').value.trim();
 
   if (!dept) { msg.innerHTML = '<div class="msg err">請選擇部門。</div>'; return; }
@@ -725,6 +743,7 @@ function refreshCurrentAdminView() {
   else if (currentAdminView === 'unregistered') loadUnregistered();
   else if (currentAdminView === 'items') loadItemsAdmin();
   else if (currentAdminView === 'selfpay') loadSelfPayAdmin();
+  else if (currentAdminView === 'history') loadHistoryBatches();
 }
 
 document.querySelectorAll('.admin-tab').forEach(tab => {
@@ -964,7 +983,7 @@ function renderUnregistered(res) {
   const rows = res.unregistered || [];
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有名單，或全部人都已報名</div>'; return; }
   wrap.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px;">${rows.map(r =>
-    `<span style="background:#F6E4E1;color:var(--danger);border-radius:20px;padding:4px 12px;font-size:12.5px;font-weight:700;white-space:nowrap;">${escapeHtml(r.name)}（${escapeHtml(r.dept)}）</span>`
+    `<span style="background:#FBF1DE;color:#92601A;border-radius:20px;padding:4px 12px;font-size:12.5px;font-weight:700;white-space:nowrap;">${escapeHtml(r.name)}（${escapeHtml(r.dept)}）</span>`
   ).join('')}</div>`;
 }
 function refreshUnregisteredTable() {
@@ -1095,6 +1114,60 @@ document.getElementById('addSelfPayBtn').addEventListener('click', () => {
     loadSelfPayAdmin();
   });
 });
+
+// ---- 歷史紀錄 ----
+document.getElementById('archiveBtn').addEventListener('click', () => {
+  const batchName = document.getElementById('archiveBatchName').value.trim();
+  const msg = document.getElementById('archiveMsg');
+  if (!batchName) { msg.innerHTML = '<div class="msg err">請輸入梯次名稱</div>'; return; }
+  if (!confirm(`確定要把目前的名冊封存為「${batchName}」嗎？\n封存後目前的報名資料會被清空，改為可在「歷史紀錄」查閱，此動作無法復原。`)) return;
+  callApi({ action: 'archiveRoster', pin: adminPin, batchName }).then(res => {
+    if (res.success) {
+      msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message)}</div>`;
+      document.getElementById('archiveBatchName').value = '';
+      loadHistoryBatches();
+      loadDashboard();
+    } else {
+      msg.innerHTML = `<div class="msg err">${escapeHtml(res.message||'封存失敗')}</div>`;
+    }
+  });
+});
+
+function loadHistoryBatches() {
+  callApi({ action: 'historyBatches', pin: adminPin }).then(res => renderHistoryBatches(res.batches || []));
+}
+function renderHistoryBatches(batches) {
+  const wrap = document.getElementById('historyBatchList');
+  if (batches.length === 0) { wrap.innerHTML = '<div class="empty">目前尚無封存的歷史梯次</div>'; return; }
+  wrap.innerHTML = batches.map(b => `
+    <div class="settings-row">
+      <span class="grow"><b>${escapeHtml(b.batch)}</b>　共 ${b.count} 筆</span>
+      <button class="btn ghost small viewHistoryBtn" data-batch="${escapeHtml(b.batch)}">查看</button>
+      <button class="btn small exportHistoryBtn" data-batch="${escapeHtml(b.batch)}">匯出 CSV</button>
+    </div>`).join('');
+  wrap.querySelectorAll('.viewHistoryBtn').forEach(btn => {
+    btn.addEventListener('click', () => loadHistoryRoster(btn.dataset.batch));
+  });
+  wrap.querySelectorAll('.exportHistoryBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      callApi({ action: 'exportHistoryCsv', pin: adminPin, batch: btn.dataset.batch }).then(res => {
+        const blob = new Blob(["\uFEFF" + res.csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = btn.dataset.batch + '.csv'; a.click();
+      });
+    });
+  });
+}
+function loadHistoryRoster(batch) {
+  callApi({ action: 'historyRoster', pin: adminPin, batch }).then(res => {
+    const wrap = document.getElementById('historyRosterWrap');
+    const rows = res.rows || [];
+    if (rows.length === 0) { wrap.innerHTML = '<div class="empty">此梯次沒有資料</div>'; return; }
+    wrap.innerHTML = `<div style="font-weight:700;margin-bottom:8px;">「${escapeHtml(batch)}」名冊</div>
+      <table><thead><tr><th>姓名</th><th>身份</th><th>部門</th><th>日期</th><th>方案</th><th>自費項目</th></tr></thead>
+      <tbody>${rows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity)}</td><td>${escapeHtml(r.dept)}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.plan||'—')}</td><td style="max-width:160px;font-size:12px;">${escapeHtml(r.selfPay||'—')}</td></tr>`).join('')}</tbody></table>`;
+  });
+}
 
 loadAvailability();
 loadItemsAsync();
