@@ -104,7 +104,7 @@
     <div>
       <div class="eyebrow">員工暨眷屬健康檢查</div>
       <h1>健康檢查場次報名</h1>
-      <p class="sub">請選擇一個檢查日期並填寫報名資料，若攜帶眷屬同行，請直接填寫總人數。</p>
+      <p class="sub">若攜帶眷屬同行，可在表單中新增眷屬並各自選擇檢查日期，不需要跟同仁同一天。</p>
     </div>
     <div class="tabs">
       <button class="tab-btn active" data-page="signup">同仁報名</button>
@@ -118,7 +118,7 @@
       <div class="sec-title"><span class="n">01</span> 健檢項目參考</div>
       <div id="itemsContent" class="loading">圖片載入中…</div>
     </div>
-    <div class="sec-title"><span class="n">02</span> 選擇檢查場次</div>
+    <div class="sec-title"><span class="n">02</span> 各場次名額參考</div>
     <div id="dateGrid" class="grid"><div class="loading">場次載入中…</div></div>
     <div id="formArea"></div>
   </div>
@@ -181,8 +181,15 @@
           <div style="font-weight:700;margin-bottom:14px;">編輯報名資料</div>
           <div class="row2">
             <div class="field"><label>姓名</label><input id="editName"></div>
-            <div class="field"><label>部門</label><input id="editDept"></div>
+            <div class="field">
+              <label>身份</label>
+              <select id="editIdentity">
+                <option value="本人">本人</option>
+                <option value="眷屬">眷屬</option>
+              </select>
+            </div>
           </div>
+          <div class="field"><label>部門</label><input id="editDept"></div>
           <div class="row2">
             <div class="field"><label>身份證字號</label><input id="editIdNumber"></div>
             <div class="field"><label>出生日期（民國年）</label><input id="editBirthDate" placeholder="民國75年3月15日"></div>
@@ -197,14 +204,9 @@
               </select>
             </div>
           </div>
-          <div class="row2">
-            <div class="field"><label>人數</label><input id="editHeadcount" type="number" min="1"></div>
-            <div class="field"><label>眷屬姓名</label><input id="editRelativeName"></div>
-          </div>
           <div class="field"><label>日期</label><select id="editDate"></select></div>
           <div class="field"><label>方案</label><input id="editPlan"></div>
-          <div class="field"><label>員工自費項目</label><input id="editSelfPayEmployee"></div>
-          <div class="field"><label>眷屬自費項目</label><input id="editSelfPayRelative"></div>
+          <div class="field"><label>自費項目</label><input id="editSelfPay"></div>
           <div class="field"><label>備註</label><input id="editNote"></div>
           <div style="display:flex;gap:10px;margin-top:14px;">
             <button class="btn" id="editSaveBtn" style="flex:1;">儲存</button>
@@ -318,7 +320,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // ================= 同仁報名頁 =================
 let availability = [];
-let selectedDate = null;
 
 const AVAILABILITY_CACHE_KEY = 'hc_availability_cache_v1';
 const AVAILABILITY_CACHE_TTL = 45000; // 45 秒，落在需求的 30~60 秒區間
@@ -357,6 +358,8 @@ function loadItemsAsync() {
     document.getElementById('itemsArea').style.display = 'none';
   });
 }
+
+// 場次卡片現在只是「參考資訊」，不再需要點選；實際選日期在下方每個人的表單裡各自選
 function renderDates(data) {
   availability = data;
   const grid = document.getElementById('dateGrid');
@@ -365,23 +368,16 @@ function renderDates(data) {
     const pct = Math.min(100, Math.round((d.count / d.capacity) * 100));
     let cls = ''; if (pct >= 100) cls = 'full'; else if (pct >= 75) cls = 'warn';
     return `
-      <div class="ticket ${selectedDate===d.date?'selected':''} ${d.full?'full':''}" data-date="${escapeHtml(d.date)}">
+      <div class="ticket ${d.full?'full':''}" style="cursor:default;">
         <div class="ticket-date">${escapeHtml(d.date)}</div>
         <div class="bar"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
         <div class="count-row"><span><b>${d.count}</b> / ${d.capacity} 人</span><span class="pill ${d.full?'full':''}">${d.full?'已額滿':'可報名'}</span></div>
       </div>`;
   }).join('');
-  grid.querySelectorAll('.ticket').forEach(el => {
-    el.addEventListener('click', () => {
-      const date = el.getAttribute('data-date');
-      const d = availability.find(x => x.date === date);
-      if (d.full) return;
-      selectedDate = date;
-      renderDates(availability);
-      renderForm();
-    });
-  });
+  ensureFormInitialized();
+  refreshAllPersonDateSelects();
 }
+
 let employeeList = [];
 let selfPayItems = [];
 
@@ -389,12 +385,13 @@ function loadEmployeesAsync() {
   callApi({ action: 'employeesPublic' }).then(res => {
     employeeList = (res && res.employees) || [];
     refreshDeptSelectIfPresent();
+    refreshNameDatalist();
   }).catch(() => {});
 }
 function loadSelfPayItemsAsync() {
   callApi({ action: 'selfPayItems' }).then(res => {
     selfPayItems = (res && res.items) || [];
-    refreshSelfPayListsIfPresent();
+    refreshAllSelfPaySelects();
   }).catch(() => {});
 }
 function refreshDeptSelectIfPresent() {
@@ -405,229 +402,256 @@ function refreshDeptSelectIfPresent() {
   sel.innerHTML = '<option value="">請選擇部門</option>' + depts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('') + '<option value="__other__">其他（手動輸入）</option>';
   if (depts.includes(current)) sel.value = current;
 }
-let selectedSelfPay = { emp: [], rel: [] }; // each entry: {id, name, price}
+function refreshNameDatalist() {
+  const dl = document.getElementById('empNameList');
+  if (dl) dl.innerHTML = employeeList.map(e => `<option value="${escapeHtml(e.name)}">`).join('');
+}
 
-function selfPaySelectHtml(prefix) {
+// ---------- 多人員報名表單 ----------
+let formInitialized = false;
+let personIdCounter = 0;
+let personsState = []; // [{id, identity}]
+let selectedSelfPayByPerson = {}; // { [id]: [{id,name,price}] }
+
+function ensureFormInitialized() {
+  if (formInitialized) return;
+  formInitialized = true;
+  const area = document.getElementById('formArea');
+  area.innerHTML = `
+    <div class="sec-title"><span class="n">03</span> 填寫報名資料</div>
+    <div class="panel">
+      <div class="field">
+        <label>部門 *</label>
+        <select id="fDept"><option value="">請選擇部門</option></select>
+        <input id="fDeptOther" placeholder="請輸入部門名稱" style="display:none;margin-top:6px;">
+        <div class="hint">此部門套用在整筆報名（含所有眷屬），用於名冊分類。</div>
+      </div>
+      <datalist id="empNameList"></datalist>
+      <div id="personsContainer"></div>
+      <button type="button" class="btn ghost" id="addPersonBtn" style="margin-top:6px;">＋ 新增眷屬</button>
+      <div class="field" style="margin-top:16px;"><label>備註（選填）</label><input id="fNote" placeholder="如有特殊需求請填寫"></div>
+      <button class="btn" id="submitBtn" style="margin-top:6px;">確認報名</button>
+      <div id="formMsg"></div>
+    </div>`;
+  refreshDeptSelectIfPresent();
+  refreshNameDatalist();
+  document.getElementById('fDept').addEventListener('change', () => {
+    const other = document.getElementById('fDept').value === '__other__';
+    document.getElementById('fDeptOther').style.display = other ? 'block' : 'none';
+  });
+  document.getElementById('addPersonBtn').addEventListener('click', () => addPersonCard('眷屬'));
+  document.getElementById('submitBtn').addEventListener('click', openConfirmModal);
+
+  addPersonCard('本人');
+}
+
+function personDateOptionsHtml(selectedValue) {
+  if (availability.length === 0) return '<option value="">場次載入中…</option>';
+  return '<option value="">請選擇日期</option>' + availability.map(d =>
+    `<option value="${escapeHtml(d.date)}" ${d.full?'disabled':''} ${d.date===selectedValue?'selected':''}>${escapeHtml(d.date)}（${d.full?'已額滿':'剩'+d.remaining+'位'}）</option>`
+  ).join('');
+}
+function selfPaySelectHtml() {
   if (selfPayItems.length === 0) return '<option value="">目前尚無自費加選項目</option>';
   return '<option value="">請選擇項目</option>' + selfPayItems.map(i =>
     `<option value="${escapeHtml(i.id)}">${escapeHtml(i.name)}（NT$${escapeHtml(String(i.price))}）</option>`
   ).join('');
 }
-function renderSelfPayChips(key) {
-  const wrap = document.getElementById(key === 'emp' ? 'selfPayEmpChips' : 'selfPayRelChips');
-  if (!wrap) return;
-  const list = selectedSelfPay[key];
-  if (list.length === 0) { wrap.innerHTML = ''; return; }
-  wrap.innerHTML = list.map((item, idx) =>
-    `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--primary-light);color:var(--primary-dark);border-radius:20px;padding:4px 10px 4px 12px;margin:4px 6px 0 0;font-size:12.5px;">
-       ${escapeHtml(item.name)}（NT$${escapeHtml(String(item.price))}）
-       <button type="button" class="removeSelfPayBtn" data-key="${key}" data-idx="${idx}" style="background:none;border:none;cursor:pointer;color:var(--primary-dark);font-weight:700;padding:0;">✕</button>
-     </span>`
-  ).join('');
-  wrap.querySelectorAll('.removeSelfPayBtn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      selectedSelfPay[btn.dataset.key].splice(Number(btn.dataset.idx), 1);
-      renderSelfPayChips(btn.dataset.key);
-    });
-  });
-}
-function refreshSelfPayListsIfPresent() {
-  const empSel = document.getElementById('selfPayEmpSelect');
-  if (empSel) empSel.innerHTML = selfPaySelectHtml('emp');
-  const relSel = document.getElementById('selfPayRelSelect');
-  if (relSel) relSel.innerHTML = selfPaySelectHtml('rel');
-}
 
-function renderForm() {
-  const area = document.getElementById('formArea');
-  const d = availability.find(x => x.date === selectedDate);
-  if (!d) { area.innerHTML = ''; return; }
-  area.innerHTML = `
-    <div class="sec-title"><span class="n">03</span> 填寫報名資料</div>
-    <div class="panel">
-      <div style="font-weight:700;margin-bottom:12px;color:var(--primary-dark);">已選擇：${escapeHtml(d.date)}（剩餘 ${d.remaining} 位）</div>
-      <div class="row2">
-        <div class="field">
-          <label>姓名 *</label>
-          <input id="fName" list="empNameList" autocomplete="off">
-          <datalist id="empNameList">${employeeList.map(e => `<option value="${escapeHtml(e.name)}">`).join('')}</datalist>
-        </div>
-        <div class="field">
-          <label>部門 *</label>
-          <select id="fDept"><option value="">請選擇部門</option></select>
-          <input id="fDeptOther" placeholder="請輸入部門名稱" style="display:none;margin-top:6px;">
-        </div>
-      </div>
-      <div class="row2">
-        <div class="field"><label>身份證字號 *</label><input id="fIdNumber" placeholder="A123456789"></div>
-        <div class="field">
-          <label>出生日期（民國年） *</label>
-          <div style="display:flex;gap:6px;">
-            <input id="fBirthYear" type="number" min="1" max="200" placeholder="年" style="width:33%;">
-            <select id="fBirthMonth" style="width:33%;">
-              <option value="">月</option>
-              ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join('')}
-            </select>
-            <select id="fBirthDay" style="width:34%;">
-              <option value="">日</option>
-              ${Array.from({length:31},(_,i)=>i+1).map(day=>`<option value="${day}">${day}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-      </div>
-      <div class="row2">
-        <div class="field"><label>手機號碼 *</label><input id="fPhone" type="tel" placeholder="0912345678"></div>
-        <div class="field">
-          <label>早餐（選填）</label>
-          <select id="fBreakfast">
-            <option value="">不指定</option>
-            <option value="葷食">葷食</option>
-            <option value="素食">素食</option>
+function addPersonCard(identity) {
+  const id = personIdCounter++;
+  personsState.push({ id, identity });
+  selectedSelfPayByPerson[id] = [];
+
+  const isMain = identity === '本人';
+  const card = document.createElement('div');
+  card.className = 'panel';
+  card.id = `person_${id}`;
+  card.style.marginTop = '14px';
+  card.style.background = isMain ? 'var(--primary-light)' : '#FAFCFB';
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:700;color:var(--primary-dark);">${isMain?'同仁本人':'眷屬'}</div>
+      ${isMain ? '' : `<button type="button" class="btn danger small removePersonBtn" data-id="${id}">移除此人</button>`}
+    </div>
+    <div class="row2">
+      <div class="field"><label>姓名 *</label><input id="p${id}_name" ${isMain ? 'list="empNameList"' : ''} autocomplete="off"></div>
+      <div class="field"><label>身份證字號 *</label><input id="p${id}_idnum" placeholder="A123456789"></div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>出生日期（民國年） *</label>
+        <div style="display:flex;gap:6px;">
+          <input id="p${id}_byear" type="number" min="1" max="200" placeholder="年" style="width:33%;">
+          <select id="p${id}_bmonth" style="width:33%;">
+            <option value="">月</option>
+            ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join('')}
+          </select>
+          <select id="p${id}_bday" style="width:34%;">
+            <option value="">日</option>
+            ${Array.from({length:31},(_,i)=>i+1).map(day=>`<option value="${day}">${day}</option>`).join('')}
           </select>
         </div>
       </div>
-      <div class="row2">
-        <div class="field"><label>報名人數（含本人） *</label><input id="fHeadcount" type="number" min="1" max="6" value="1"></div>
-        <div class="field"><label>眷屬姓名</label><input id="fRelativeName" placeholder="多位用頓號分隔"></div>
+      <div class="field"><label>手機號碼 *</label><input id="p${id}_phone" type="tel" placeholder="0912345678"></div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>早餐（選填）</label>
+        <select id="p${id}_breakfast">
+          <option value="">不指定</option>
+          <option value="葷食">葷食</option>
+          <option value="素食">素食</option>
+        </select>
       </div>
       <div class="field">
-        <label>本人健檢方案 *</label>
-        <select id="fPlan">
+        <label>健檢方案 *</label>
+        <select id="p${id}_plan">
           <option value="">請選擇方案</option>
           <option value="A案">A案（6000元，含骨質密度檢查，不含甲狀腺超音波）</option>
           <option value="B案">B案（6000元，含甲狀腺超音波，不含骨質密度檢查）</option>
         </select>
       </div>
-      <div class="field" id="relativePlanField" style="display:none;">
-        <label>眷屬健檢方案</label>
-        <select id="fRelativePlan">
-          <option value="">與本人相同</option>
-          <option value="A案">A案（6000元，含骨質密度檢查，不含甲狀腺超音波）</option>
-          <option value="B案">B案（6000元，含甲狀腺超音波，不含骨質密度檢查）</option>
-        </select>
-        <div class="hint">若眷屬要選跟您不同的方案，請在這裡選擇；多位眷屬方案不同時，請在下方備註說明。</div>
+    </div>
+    <div class="field">
+      <label>檢查日期 *</label>
+      <select id="p${id}_date">${personDateOptionsHtml('')}</select>
+      <div class="hint">每位報名人員可以選擇不同的日期，不需要跟其他人同一天。</div>
+    </div>
+    <div class="field">
+      <label>自費加選項目（選填）</label>
+      <div style="display:flex;gap:8px;">
+        <select id="p${id}_selfpay_select" style="flex:1;">${selfPaySelectHtml()}</select>
+        <button type="button" class="btn ghost small" id="p${id}_selfpay_add">加入</button>
       </div>
-      <div class="field">
-        <label>員工加選自費項目（選填）</label>
-        <div style="display:flex;gap:8px;">
-          <select id="selfPayEmpSelect" style="flex:1;">${selfPaySelectHtml('emp')}</select>
-          <button type="button" class="btn ghost small" id="selfPayEmpAddBtn">加入</button>
-        </div>
-        <div id="selfPayEmpChips"></div>
-      </div>
-      <div class="field" id="relativeSelfPayField" style="display:none;">
-        <label>眷屬加選自費項目（選填）</label>
-        <div style="display:flex;gap:8px;">
-          <select id="selfPayRelSelect" style="flex:1;">${selfPaySelectHtml('rel')}</select>
-          <button type="button" class="btn ghost small" id="selfPayRelAddBtn">加入</button>
-        </div>
-        <div id="selfPayRelChips"></div>
-      </div>
-      <div class="field"><label>備註（選填）</label><input id="fNote" placeholder="如有特殊需求請填寫"></div>
-      <button class="btn" id="submitBtn">確認報名</button>
-      <div id="formMsg"></div>
-    </div>`;
-  selectedSelfPay = { emp: [], rel: [] };
-  renderSelfPayChips('emp');
-  renderSelfPayChips('rel');
-  document.getElementById('selfPayEmpAddBtn').addEventListener('click', () => {
-    const sel = document.getElementById('selfPayEmpSelect');
+      <div id="p${id}_selfpay_chips"></div>
+    </div>
+  `;
+  document.getElementById('personsContainer').appendChild(card);
+
+  if (isMain) {
+    document.getElementById(`p${id}_name`).addEventListener('input', () => {
+      const val = document.getElementById(`p${id}_name`).value.trim();
+      const match = employeeList.find(e => e.name === val);
+      if (match) {
+        const deptSel = document.getElementById('fDept');
+        const hasOption = Array.from(deptSel.options).some(o => o.value === match.dept);
+        if (hasOption) deptSel.value = match.dept;
+      }
+    });
+  }
+  document.getElementById(`p${id}_selfpay_add`).addEventListener('click', () => {
+    const sel = document.getElementById(`p${id}_selfpay_select`);
     const item = selfPayItems.find(i => i.id === sel.value);
-    if (item) { selectedSelfPay.emp.push(item); renderSelfPayChips('emp'); sel.value = ''; }
+    if (item) { selectedSelfPayByPerson[id].push(item); renderSelfPayChips(id); sel.value = ''; }
   });
-  document.getElementById('selfPayRelAddBtn').addEventListener('click', () => {
-    const sel = document.getElementById('selfPayRelSelect');
-    const item = selfPayItems.find(i => i.id === sel.value);
-    if (item) { selectedSelfPay.rel.push(item); renderSelfPayChips('rel'); sel.value = ''; }
-  });
-  refreshDeptSelectIfPresent();
-  document.getElementById('fDept').addEventListener('change', () => {
-    const other = document.getElementById('fDept').value === '__other__';
-    document.getElementById('fDeptOther').style.display = other ? 'block' : 'none';
-  });
-  document.getElementById('fName').addEventListener('input', () => {
-    const val = document.getElementById('fName').value.trim();
-    const match = employeeList.find(e => e.name === val);
-    if (match) {
-      const deptSel = document.getElementById('fDept');
-      const hasOption = Array.from(deptSel.options).some(o => o.value === match.dept);
-      if (hasOption) deptSel.value = match.dept;
-    }
-  });
-  document.getElementById('submitBtn').addEventListener('click', openConfirmModal);
-  document.getElementById('fHeadcount').addEventListener('input', toggleRelativeFields);
-  toggleRelativeFields();
-  area.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-function toggleRelativeFields() {
-  const headcount = parseInt(document.getElementById('fHeadcount').value, 10) || 1;
-  const show = headcount > 1 ? 'block' : 'none';
-  document.getElementById('relativePlanField').style.display = show;
-  document.getElementById('relativeSelfPayField').style.display = show;
+  const removeBtn = card.querySelector('.removePersonBtn');
+  if (removeBtn) {
+    removeBtn.addEventListener('click', () => {
+      card.remove();
+      personsState = personsState.filter(p => p.id !== id);
+      delete selectedSelfPayByPerson[id];
+    });
+  }
+  renderSelfPayChips(id);
 }
 
-function collectSelfPay(key) {
-  return selectedSelfPay[key].map(item => `${item.name}（NT$${item.price}）`).join('、');
+function renderSelfPayChips(id) {
+  const wrap = document.getElementById(`p${id}_selfpay_chips`);
+  if (!wrap) return;
+  const list = selectedSelfPayByPerson[id] || [];
+  if (list.length === 0) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = list.map((item, idx) =>
+    `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--primary-light);color:var(--primary-dark);border-radius:20px;padding:4px 10px 4px 12px;margin:4px 6px 0 0;font-size:12.5px;">
+       ${escapeHtml(item.name)}（NT$${escapeHtml(String(item.price))}）
+       <button type="button" class="removeSelfPayBtn" data-id="${id}" data-idx="${idx}" style="background:none;border:none;cursor:pointer;color:var(--primary-dark);font-weight:700;padding:0;">✕</button>
+     </span>`
+  ).join('');
+  wrap.querySelectorAll('.removeSelfPayBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedSelfPayByPerson[btn.dataset.id].splice(Number(btn.dataset.idx), 1);
+      renderSelfPayChips(Number(btn.dataset.id));
+    });
+  });
+}
+
+function refreshAllPersonDateSelects() {
+  personsState.forEach(p => {
+    const sel = document.getElementById(`p${p.id}_date`);
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = personDateOptionsHtml(current);
+  });
+}
+function refreshAllSelfPaySelects() {
+  personsState.forEach(p => {
+    const sel = document.getElementById(`p${p.id}_selfpay_select`);
+    if (sel) sel.innerHTML = selfPaySelectHtml();
+  });
 }
 
 let pendingPayload = null;
 
 function openConfirmModal() {
-  const name = document.getElementById('fName').value.trim();
+  const msg = document.getElementById('formMsg');
   const deptSel = document.getElementById('fDept').value;
   const dept = deptSel === '__other__' ? document.getElementById('fDeptOther').value.trim() : deptSel;
-  const idNumber = document.getElementById('fIdNumber').value.trim();
-  const birthYear = document.getElementById('fBirthYear').value.trim();
-  const birthMonth = document.getElementById('fBirthMonth').value;
-  const birthDay = document.getElementById('fBirthDay').value;
-  const phone = document.getElementById('fPhone').value.trim();
-  const breakfast = document.getElementById('fBreakfast').value;
-  const headcount = parseInt(document.getElementById('fHeadcount').value, 10) || 1;
-  const relativeName = document.getElementById('fRelativeName').value.trim();
-  const plan = document.getElementById('fPlan').value;
-  const relativePlan = document.getElementById('fRelativePlan').value;
   const note = document.getElementById('fNote').value.trim();
-  const msg = document.getElementById('formMsg');
 
-  if (!name || !dept) { msg.innerHTML = '<div class="msg err">請填寫姓名與部門。</div>'; return; }
-  if (!idNumber) { msg.innerHTML = '<div class="msg err">請填寫身份證字號。</div>'; return; }
-  if (!/^[A-Za-z][12]\d{8}$/.test(idNumber)) { msg.innerHTML = '<div class="msg err">身份證字號格式不正確，請確認（例如 A123456789）。</div>'; return; }
-  if (!birthYear || !birthMonth || !birthDay) { msg.innerHTML = '<div class="msg err">請完整填寫出生日期（民國年）。</div>'; return; }
-  if (!phone) { msg.innerHTML = '<div class="msg err">請填寫手機號碼。</div>'; return; }
-  if (!/^09\d{8}$/.test(phone)) { msg.innerHTML = '<div class="msg err">手機號碼格式不正確，請確認（例如 0912345678）。</div>'; return; }
-  if (!plan) { msg.innerHTML = '<div class="msg err">請選擇本人健檢方案（A案或B案）。</div>'; return; }
+  if (!dept) { msg.innerHTML = '<div class="msg err">請選擇部門。</div>'; return; }
+  if (personsState.length === 0) { msg.innerHTML = '<div class="msg err">請至少填寫一位報名人員。</div>'; return; }
+
+  const persons = [];
+  for (const p of personsState) {
+    const name = document.getElementById(`p${p.id}_name`).value.trim();
+    const idNumber = document.getElementById(`p${p.id}_idnum`).value.trim();
+    const byear = document.getElementById(`p${p.id}_byear`).value.trim();
+    const bmonth = document.getElementById(`p${p.id}_bmonth`).value;
+    const bday = document.getElementById(`p${p.id}_bday`).value;
+    const phone = document.getElementById(`p${p.id}_phone`).value.trim();
+    const breakfast = document.getElementById(`p${p.id}_breakfast`).value;
+    const plan = document.getElementById(`p${p.id}_plan`).value;
+    const date = document.getElementById(`p${p.id}_date`).value;
+    const who = p.identity === '本人' ? '同仁本人' : ('眷屬「' + (name || '未填姓名') + '」');
+
+    if (!name) { msg.innerHTML = `<div class="msg err">請填寫${who}的姓名。</div>`; return; }
+    if (!idNumber || !/^[A-Za-z][12]\d{8}$/.test(idNumber)) { msg.innerHTML = `<div class="msg err">請確認${who}的身份證字號格式（例如 A123456789）。</div>`; return; }
+    if (!byear || !bmonth || !bday) { msg.innerHTML = `<div class="msg err">請完整填寫${who}的出生日期（民國年）。</div>`; return; }
+    if (!phone || !/^09\d{8}$/.test(phone)) { msg.innerHTML = `<div class="msg err">請確認${who}的手機號碼格式（例如 0912345678）。</div>`; return; }
+    if (!plan) { msg.innerHTML = `<div class="msg err">請選擇${who}的健檢方案。</div>`; return; }
+    if (!date) { msg.innerHTML = `<div class="msg err">請選擇${who}的檢查日期。</div>`; return; }
+
+    persons.push({
+      identity: p.identity, name, idNumber,
+      birthDate: `民國${byear}年${bmonth}月${bday}日`,
+      phone, breakfast, plan, date,
+      selfPay: (selectedSelfPayByPerson[p.id] || []).map(i => `${i.name}（NT$${i.price}）`).join('、')
+    });
+  }
   msg.innerHTML = '';
 
-  const birthDate = `民國${birthYear}年${birthMonth}月${birthDay}日`;
-  const planText = (headcount > 1 && relativePlan && relativePlan !== plan)
-    ? `本人：${plan}｜眷屬：${relativePlan}`
-    : plan;
-  const selfPayEmployee = collectSelfPay('emp');
-  const selfPayRelative = headcount > 1 ? collectSelfPay('rel') : '';
+  pendingPayload = { dept, persons, note };
 
-  pendingPayload = {
-    name, dept, idNumber, birthDate, phone, breakfast,
-    relativeName, plan: planText, headcount, date: selectedDate,
-    selfPayEmployee, selfPayRelative, itemChoicesText: note
-  };
-
-  const rows = [
-    ['日期', selectedDate],
-    ['姓名', name], ['部門', dept],
-    ['身份證字號', idNumber], ['出生日期', birthDate],
-    ['手機號碼', phone], ['早餐', breakfast || '未指定'],
-    ['報名人數', headcount + ' 人'],
-    ['眷屬姓名', relativeName || '—'],
-    ['健檢方案', planText],
-    ['員工自費項目', selfPayEmployee || '無'],
-  ];
-  if (headcount > 1) rows.push(['眷屬自費項目', selfPayRelative || '無']);
+  const rows = [['部門', dept]];
+  persons.forEach((p, idx) => {
+    rows.push(['—', (p.identity === '本人' ? '同仁本人' : '眷屬 ' + (idx+1))]);
+    rows.push(['姓名', p.name]);
+    rows.push(['身份證字號', p.idNumber]);
+    rows.push(['出生日期', p.birthDate]);
+    rows.push(['手機號碼', p.phone]);
+    rows.push(['早餐', p.breakfast || '未指定']);
+    rows.push(['健檢方案', p.plan]);
+    rows.push(['檢查日期', p.date]);
+    rows.push(['自費加選', p.selfPay || '無']);
+  });
   rows.push(['備註', note || '無']);
 
   document.getElementById('confirmSummary').innerHTML = rows.map(([k, v]) =>
-    `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line);">
-       <span style="color:var(--ink-soft);">${escapeHtml(k)}</span><span style="text-align:right;font-weight:700;">${escapeHtml(v)}</span>
-     </div>`
+    k === '—'
+      ? `<div style="font-weight:700;color:var(--primary-dark);margin-top:12px;padding-top:10px;border-top:2px solid var(--line);">${escapeHtml(v)}</div>`
+      : `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line);">
+           <span style="color:var(--ink-soft);">${escapeHtml(k)}</span><span style="text-align:right;font-weight:700;">${escapeHtml(v)}</span>
+         </div>`
   ).join('');
   document.getElementById('confirmModal').style.display = 'flex';
 }
@@ -718,8 +742,19 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
   });
 });
 
+const DASHBOARD_CACHE_KEY = 'hc_admin_dashboard_cache';
+const DASHBOARD_CACHE_TTL = 8000; // 8 秒，只為了讓畫面先秒開，資料很快就會被下面的即時請求覆蓋
 function loadDashboard() {
-  callApi({ action: 'dashboard', pin: adminPin }).then(renderDashboard);
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(DASHBOARD_CACHE_KEY) || 'null');
+    if (cached && (Date.now() - cached.ts) < DASHBOARD_CACHE_TTL) {
+      renderDashboard(cached.data);
+    }
+  } catch (e) { /* 忽略壞掉的快取內容 */ }
+  callApi({ action: 'dashboard', pin: adminPin }).then(data => {
+    renderDashboard(data);
+    try { sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch (e) {}
+  });
 }
 function renderDashboard(data) {
   if (!data.success) return;
@@ -755,16 +790,15 @@ function loadRoster() {
 function renderRoster(rows) {
   const wrap = document.getElementById('rosterTableWrap');
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的報名紀錄</div>'; return; }
-  wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>部門</th><th>身份證字號</th><th>出生日期</th><th>手機</th><th>早餐</th><th>眷屬姓名</th><th>人數</th><th>日期</th><th>方案</th><th>員工自費</th><th>眷屬自費</th><th>備註</th><th>更改日期</th><th>操作</th></tr></thead>
+  wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>身份</th><th>部門</th><th>身份證字號</th><th>出生日期</th><th>手機</th><th>早餐</th><th>日期</th><th>方案</th><th>自費項目</th><th>備註</th><th>更改日期</th><th>操作</th></tr></thead>
     <tbody>${rows.map((r,idx) => `<tr>
-      <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.dept)}</td>
+      <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity||'本人')}</td><td>${escapeHtml(r.dept)}</td>
       <td>${escapeHtml(r.idNumber||'—')}</td><td>${escapeHtml(r.birthDate||'—')}</td>
       <td>${escapeHtml(r.phone||'—')}</td><td>${escapeHtml(r.breakfast||'—')}</td>
-      <td>${escapeHtml(r.relativeName||'—')}</td><td>${r.headcount}</td><td>${escapeHtml(r.date)}</td>
+      <td>${escapeHtml(r.date)}</td>
       <td>${escapeHtml(r.plan||'—')}</td>
-      <td style="max-width:160px;font-size:12px;">${escapeHtml(r.selfPayEmployee||'—')}</td>
-      <td style="max-width:160px;font-size:12px;">${escapeHtml(r.selfPayRelative||'—')}</td>
-      <td style="max-width:160px;font-size:12px;">${escapeHtml(r.itemChoicesText||'—')}</td>
+      <td style="max-width:180px;font-size:12px;">${escapeHtml(r.selfPay||'—')}</td>
+      <td style="max-width:160px;font-size:12px;">${escapeHtml(r.note||'—')}</td>
       <td>
         <select class="dateChangeSelect" data-idx="${idx}" style="padding:4px 6px;font-size:12px;">
           ${currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('')}
@@ -811,18 +845,16 @@ let editingTimestamp = null;
 function openEditModal(r) {
   editingTimestamp = r.timestamp;
   document.getElementById('editName').value = r.name;
+  document.getElementById('editIdentity').value = r.identity || '本人';
   document.getElementById('editDept').value = r.dept;
   document.getElementById('editIdNumber').value = r.idNumber || '';
   document.getElementById('editBirthDate').value = r.birthDate || '';
   document.getElementById('editPhone').value = r.phone || '';
   document.getElementById('editBreakfast').value = r.breakfast || '';
-  document.getElementById('editHeadcount').value = r.headcount;
-  document.getElementById('editRelativeName').value = r.relativeName || '';
   document.getElementById('editDate').innerHTML = currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('');
   document.getElementById('editPlan').value = r.plan || '';
-  document.getElementById('editSelfPayEmployee').value = r.selfPayEmployee || '';
-  document.getElementById('editSelfPayRelative').value = r.selfPayRelative || '';
-  document.getElementById('editNote').value = r.itemChoicesText || '';
+  document.getElementById('editSelfPay').value = r.selfPay || '';
+  document.getElementById('editNote').value = r.note || '';
   document.getElementById('editMsg').innerHTML = '';
   document.getElementById('editModal').style.display = 'flex';
 }
@@ -832,18 +864,16 @@ document.getElementById('editCancelBtn').addEventListener('click', () => {
 document.getElementById('editSaveBtn').addEventListener('click', () => {
   const fields = {
     name: document.getElementById('editName').value.trim(),
+    identity: document.getElementById('editIdentity').value,
     dept: document.getElementById('editDept').value.trim(),
     idNumber: document.getElementById('editIdNumber').value.trim(),
     birthDate: document.getElementById('editBirthDate').value,
     phone: document.getElementById('editPhone').value.trim(),
     breakfast: document.getElementById('editBreakfast').value,
-    headcount: document.getElementById('editHeadcount').value,
-    relativeName: document.getElementById('editRelativeName').value.trim(),
     date: document.getElementById('editDate').value,
     plan: document.getElementById('editPlan').value.trim(),
-    selfPayEmployee: document.getElementById('editSelfPayEmployee').value.trim(),
-    selfPayRelative: document.getElementById('editSelfPayRelative').value.trim(),
-    itemChoicesText: document.getElementById('editNote').value.trim()
+    selfPay: document.getElementById('editSelfPay').value.trim(),
+    note: document.getElementById('editNote').value.trim()
   };
   callApi({ action: 'editRegistration', pin: adminPin, timestamp: editingTimestamp, fields }).then(res => {
     if (res.success) {
