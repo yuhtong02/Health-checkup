@@ -4,9 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>健康檢查場次報名</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#F5F7F3; --surface:#FFFFFF; --ink:#16241F; --ink-soft:#5B6E64;
@@ -14,12 +11,12 @@
     --accent:#E8A33D; --danger:#C1473B; --line:#DCE5DF; --radius:16px;
   }
   *{box-sizing:border-box;}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Noto Sans TC',sans-serif;line-height:1.6;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;line-height:1.6;}
   .wrap{max-width:980px;margin:0 auto;padding:28px 20px 70px;}
   header{margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;}
   .eyebrow{font-size:13px;letter-spacing:.12em;color:var(--primary);font-weight:700;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
   .eyebrow::before{content:"";width:18px;height:2px;background:var(--accent);display:inline-block;}
-  h1{font-family:'Noto Serif TC',serif;font-weight:700;font-size:clamp(22px,4vw,32px);margin:0 0 6px;color:var(--primary-dark);}
+  h1{font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;font-weight:700;font-size:clamp(22px,4vw,32px);margin:0 0 6px;color:var(--primary-dark);}
   .sub{color:var(--ink-soft);font-size:14px;max-width:560px;}
   .tabs{display:flex;gap:4px;}
   .tab-btn{padding:8px 16px;border-radius:20px;border:1px solid var(--line);background:var(--surface);font-size:13px;font-weight:700;color:var(--ink-soft);cursor:pointer;font-family:inherit;}
@@ -27,7 +24,7 @@
 
   .view{display:none;} .view.active{display:block;}
 
-  .sec-title{font-family:'Noto Serif TC',serif;font-size:18px;font-weight:700;margin:30px 0 14px;color:var(--ink);display:flex;align-items:baseline;gap:10px;}
+  .sec-title{font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;font-size:18px;font-weight:700;margin:30px 0 14px;color:var(--ink);display:flex;align-items:baseline;gap:10px;}
   .sec-title .n{font-size:12px;color:var(--primary);font-weight:700;letter-spacing:.08em;}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;}
   .ticket{position:relative;background:var(--surface);border-radius:var(--radius);padding:16px 16px 14px;border:1px solid var(--line);cursor:pointer;transition:.15s;}
@@ -35,7 +32,7 @@
   .ticket.selected{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-light) inset;}
   .ticket.full{opacity:.5;cursor:not-allowed;}
   .ticket.full:hover{transform:none;box-shadow:none;border-color:var(--line);}
-  .ticket-date{font-family:'Noto Serif TC',serif;font-size:17px;font-weight:700;color:var(--primary-dark);margin-bottom:10px;}
+  .ticket-date{font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;font-size:17px;font-weight:700;color:var(--primary-dark);margin-bottom:10px;}
   .bar{height:10px;border-radius:6px;background:var(--line);overflow:hidden;margin-bottom:8px;}
   .bar-fill{height:100%;background:linear-gradient(90deg,var(--primary),var(--primary-dark));}
   .bar-fill.warn{background:linear-gradient(90deg,var(--accent),#c47f1f);}
@@ -115,13 +112,13 @@
 
   <!-- 報名頁 -->
   <div id="signup" class="view active">
-    <div id="signupLoading" class="loading" style="text-align:center;padding:50px 0;">頁面載入中…</div>
-    <div id="signupContent" style="display:none;">
-      <div id="itemsArea"></div>
-      <div class="sec-title"><span class="n">02</span> 選擇檢查場次</div>
-      <div id="dateGrid" class="grid"></div>
-      <div id="formArea"></div>
+    <div id="itemsArea">
+      <div class="sec-title"><span class="n">01</span> 健檢項目參考</div>
+      <div id="itemsContent" class="loading">圖片載入中…</div>
     </div>
+    <div class="sec-title"><span class="n">02</span> 選擇檢查場次</div>
+    <div id="dateGrid" class="grid"><div class="loading">場次載入中…</div></div>
+    <div id="formArea"></div>
   </div>
 
   <div id="lightbox" style="display:none;position:fixed;inset:0;background:rgba(22,36,31,.9);z-index:999;cursor:zoom-out;overflow:auto;padding:20px;">
@@ -228,10 +225,12 @@ let adminPin = '';
 let healthItems = [];
 
 function renderItems() {
-  const area = document.getElementById('itemsArea');
-  if (healthItems.length === 0) { area.innerHTML = ''; return; }
-  area.innerHTML = `
-    <div class="sec-title"><span class="n">01</span> 健檢項目參考</div>
+  const wrapper = document.getElementById('itemsArea');
+  const content = document.getElementById('itemsContent');
+  if (healthItems.length === 0) { wrapper.style.display = 'none'; return; }
+  wrapper.style.display = 'block';
+  content.className = '';
+  content.innerHTML = `
     <div class="item-grid">
       ${healthItems.map(i => `
         <div class="item-card">
@@ -278,19 +277,41 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 let availability = [];
 let selectedDate = null;
 
-function loadInit() {
-  callApi({ action: 'init' }).then(res => {
-    if (res.availability && res.availability.success) renderDates(res.availability.dates);
-    if (res.items) { healthItems = res.items.items || []; renderItems(); }
-    document.getElementById('signupLoading').style.display = 'none';
-    document.getElementById('signupContent').style.display = 'block';
+const AVAILABILITY_CACHE_KEY = 'hc_availability_cache_v1';
+const AVAILABILITY_CACHE_TTL = 45000; // 45 秒，落在需求的 30~60 秒區間
+
+// 場次名額：優先載入，不等待照片。若有未過期的本地快取，先立即顯示，
+// 同時一定會在背景重新呼叫 API 更新，畫面上看到的名額最終仍以後端回傳為準。
+function loadAvailability(opts) {
+  opts = opts || {};
+  if (!opts.forceRefresh) {
+    try {
+      const cached = JSON.parse(localStorage.getItem(AVAILABILITY_CACHE_KEY) || 'null');
+      if (cached && (Date.now() - cached.ts) < AVAILABILITY_CACHE_TTL) {
+        renderDates(cached.dates);
+      }
+    } catch (e) { /* 忽略壞掉的快取內容 */ }
+  }
+  return callApi({ action: 'availability' }).then(res => {
+    if (res.success) {
+      renderDates(res.dates);
+      try {
+        localStorage.setItem(AVAILABILITY_CACHE_KEY, JSON.stringify({ ts: Date.now(), dates: res.dates }));
+      } catch (e) { /* 私密瀏覽模式等情況下 localStorage 可能無法寫入，忽略即可 */ }
+    }
   }).catch(() => {
-    document.getElementById('signupLoading').textContent = '載入失敗，請重新整理頁面再試一次。';
+    const grid = document.getElementById('dateGrid');
+    if (grid.querySelector('.loading')) grid.innerHTML = '<div class="loading">載入失敗，請重新整理頁面再試一次。</div>';
   });
 }
-function loadAvailability() {
-  callApi({ action: 'availability' }).then(res => {
-    if (res.success) renderDates(res.dates);
+
+// 健檢項目照片：背景非同步載入，完全不影響場次與報名表單顯示
+function loadItemsAsync() {
+  callApi({ action: 'getItems' }).then(res => {
+    healthItems = (res && res.items) || [];
+    renderItems();
+  }).catch(() => {
+    document.getElementById('itemsArea').style.display = 'none';
   });
 }
 function renderDates(data) {
@@ -384,11 +405,11 @@ function submitForm() {
       if (res.success) {
         msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message)}</div>`;
         btn.textContent = '已報名';
-        loadAvailability();
+        loadAvailability({ forceRefresh: true });
       } else {
         msg.innerHTML = `<div class="msg err">${escapeHtml(res.message)}</div>`;
         btn.disabled = false; btn.textContent = '確認報名';
-        if (res.full) loadAvailability();
+        if (res.full) loadAvailability({ forceRefresh: true });
       }
     })
     .catch(() => {
@@ -664,6 +685,12 @@ function fileToBase64(file) {
   });
 }
 
+async function uploadOneItem(file) {
+  const base64 = await fileToBase64(file);
+  const uploadRes = await callApi({ action: 'uploadItemImage', pin: adminPin, base64, filename: file.name, mimeType: file.type });
+  await callApi({ action: 'saveItem', pin: adminPin, item: { imageUrl: uploadRes.url } });
+}
+
 document.getElementById('uploadItemsBtn').addEventListener('click', async () => {
   const fileInput = document.getElementById('itemImageFiles');
   const msg = document.getElementById('itemMsg');
@@ -673,27 +700,35 @@ document.getElementById('uploadItemsBtn').addEventListener('click', async () => 
 
   btn.disabled = true;
   let done = 0;
+  let failed = 0;
   msg.innerHTML = `<div class="msg ok">上傳中… (0/${files.length})</div>`;
 
-  for (const file of files) {
-    try {
-      const base64 = await fileToBase64(file);
-      const uploadRes = await callApi({ action: 'uploadItemImage', pin: adminPin, base64, filename: file.name, mimeType: file.type });
-      await callApi({ action: 'saveItem', pin: adminPin, item: { imageUrl: uploadRes.url } });
-      done++;
-      msg.innerHTML = `<div class="msg ok">上傳中… (${done}/${files.length})</div>`;
-    } catch (err) {
-      msg.innerHTML = `<div class="msg err">第 ${done+1} 張上傳失敗，其餘照片繼續上傳中</div>`;
+  const CONCURRENCY = 3; // 同時上傳 3 張，避免一次塞爆 Apps Script 執行配額
+  let cursor = 0;
+  async function worker() {
+    while (cursor < files.length) {
+      const file = files[cursor++];
+      try {
+        await uploadOneItem(file);
+        done++;
+      } catch (err) {
+        failed++;
+      }
+      msg.innerHTML = `<div class="msg ok">上傳中… (${done + failed}/${files.length})</div>`;
     }
   }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
 
-  msg.innerHTML = `<div class="msg ok">已完成，共上傳 ${done} 張照片</div>`;
+  msg.innerHTML = failed > 0
+    ? `<div class="msg err">完成，成功 ${done} 張，失敗 ${failed} 張，可重新選取失敗的照片再試一次</div>`
+    : `<div class="msg ok">已完成，共上傳 ${done} 張照片</div>`;
   btn.disabled = false;
   fileInput.value = '';
   loadItemsAdmin();
 });
 
-loadInit();
+loadAvailability();
+loadItemsAsync();
 </script>
 </body>
 </html>
