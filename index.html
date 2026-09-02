@@ -86,6 +86,8 @@
   .stat .num{font-size:22px;font-weight:700;color:var(--primary-dark);}
   .stat .lbl{font-size:11.5px;color:var(--ink-soft);}
   table{width:100%;border-collapse:collapse;font-size:13px;background:var(--surface);border-radius:var(--radius);overflow:hidden;}
+  #rosterTableWrap{overflow-x:auto;}
+  #rosterTableWrap table{min-width:1400px;}
   th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);}
   th{background:var(--primary-light);color:var(--primary-dark);font-size:11px;text-transform:uppercase;}
   .settings-row{display:flex;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;}
@@ -125,6 +127,17 @@
     <img id="lightboxImg" style="max-width:1400px;width:100%;border-radius:4px;touch-action:pinch-zoom;display:block;margin:auto;">
   </div>
 
+  <div id="confirmModal" style="display:none;position:fixed;inset:0;background:rgba(22,36,31,.6);z-index:998;align-items:center;justify-content:center;padding:20px;">
+    <div class="panel" style="max-width:480px;width:100%;max-height:85vh;overflow:auto;">
+      <div style="font-weight:700;margin-bottom:14px;">請確認報名資料</div>
+      <div id="confirmSummary"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;">
+        <button class="btn" id="confirmSubmitBtn" style="flex:1;">確認送出</button>
+        <button class="btn ghost" id="confirmCancelBtn" style="flex:1;">返回修改</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 管理後台 -->
   <div id="admin" class="view">
     <div id="pinGate" class="pin-gate">
@@ -146,6 +159,7 @@
         <div class="admin-tab" data-view="settings">場次設定</div>
         <div class="admin-tab" data-view="unregistered">未報名提醒</div>
         <div class="admin-tab" data-view="items">健檢項目設定</div>
+        <div class="admin-tab" data-view="selfpay">自費項目設定</div>
       </div>
 
       <div id="dashboardView" class="admin-view">
@@ -170,11 +184,27 @@
             <div class="field"><label>部門</label><input id="editDept"></div>
           </div>
           <div class="row2">
+            <div class="field"><label>身份證字號</label><input id="editIdNumber"></div>
+            <div class="field"><label>出生日期（民國年）</label><input id="editBirthDate" placeholder="民國75年3月15日"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>手機號碼</label><input id="editPhone"></div>
+            <div class="field"><label>早餐</label>
+              <select id="editBreakfast">
+                <option value="">不指定</option>
+                <option value="葷食">葷食</option>
+                <option value="素食">素食</option>
+              </select>
+            </div>
+          </div>
+          <div class="row2">
             <div class="field"><label>人數</label><input id="editHeadcount" type="number" min="1"></div>
             <div class="field"><label>眷屬姓名</label><input id="editRelativeName"></div>
           </div>
           <div class="field"><label>日期</label><select id="editDate"></select></div>
           <div class="field"><label>方案</label><input id="editPlan"></div>
+          <div class="field"><label>員工自費項目</label><input id="editSelfPayEmployee"></div>
+          <div class="field"><label>眷屬自費項目</label><input id="editSelfPayRelative"></div>
           <div class="field"><label>備註</label><input id="editNote"></div>
           <div style="display:flex;gap:10px;margin-top:14px;">
             <button class="btn" id="editSaveBtn" style="flex:1;">儲存</button>
@@ -211,6 +241,19 @@
           <div id="itemMsg"></div>
         </div>
         <div id="itemsListWrap" style="margin-top:18px;"></div>
+      </div>
+
+      <div id="selfpayView" class="admin-view" style="display:none;">
+        <div class="panel">
+          <div style="font-weight:700;margin-bottom:12px;">新增自費加選項目</div>
+          <div class="row2">
+            <div class="field"><label>項目名稱</label><input id="selfPayName" placeholder="例如：頸動脈超音波"></div>
+            <div class="field"><label>優惠價</label><input id="selfPayPrice" type="number" min="0" placeholder="1530"></div>
+          </div>
+          <button class="btn" id="addSelfPayBtn">新增項目</button>
+          <div id="selfPayMsg"></div>
+        </div>
+        <div id="selfPayListWrap" style="margin-top:18px;"></div>
       </div>
     </div>
   </div>
@@ -339,6 +382,62 @@ function renderDates(data) {
     });
   });
 }
+let employeeList = [];
+let selfPayItems = [];
+
+function loadEmployeesAsync() {
+  callApi({ action: 'employeesPublic' }).then(res => {
+    employeeList = (res && res.employees) || [];
+    refreshDeptSelectIfPresent();
+  }).catch(() => {});
+}
+function loadSelfPayItemsAsync() {
+  callApi({ action: 'selfPayItems' }).then(res => {
+    selfPayItems = (res && res.items) || [];
+    refreshSelfPayListsIfPresent();
+  }).catch(() => {});
+}
+function refreshDeptSelectIfPresent() {
+  const sel = document.getElementById('fDept');
+  if (!sel) return;
+  const depts = Array.from(new Set(employeeList.map(e => e.dept).filter(Boolean))).sort();
+  const current = sel.value;
+  sel.innerHTML = '<option value="">請選擇部門</option>' + depts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('') + '<option value="__other__">其他（手動輸入）</option>';
+  if (depts.includes(current)) sel.value = current;
+}
+let selectedSelfPay = { emp: [], rel: [] }; // each entry: {id, name, price}
+
+function selfPaySelectHtml(prefix) {
+  if (selfPayItems.length === 0) return '<option value="">目前尚無自費加選項目</option>';
+  return '<option value="">請選擇項目</option>' + selfPayItems.map(i =>
+    `<option value="${escapeHtml(i.id)}">${escapeHtml(i.name)}（NT$${escapeHtml(String(i.price))}）</option>`
+  ).join('');
+}
+function renderSelfPayChips(key) {
+  const wrap = document.getElementById(key === 'emp' ? 'selfPayEmpChips' : 'selfPayRelChips');
+  if (!wrap) return;
+  const list = selectedSelfPay[key];
+  if (list.length === 0) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = list.map((item, idx) =>
+    `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--primary-light);color:var(--primary-dark);border-radius:20px;padding:4px 10px 4px 12px;margin:4px 6px 0 0;font-size:12.5px;">
+       ${escapeHtml(item.name)}（NT$${escapeHtml(String(item.price))}）
+       <button type="button" class="removeSelfPayBtn" data-key="${key}" data-idx="${idx}" style="background:none;border:none;cursor:pointer;color:var(--primary-dark);font-weight:700;padding:0;">✕</button>
+     </span>`
+  ).join('');
+  wrap.querySelectorAll('.removeSelfPayBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedSelfPay[btn.dataset.key].splice(Number(btn.dataset.idx), 1);
+      renderSelfPayChips(btn.dataset.key);
+    });
+  });
+}
+function refreshSelfPayListsIfPresent() {
+  const empSel = document.getElementById('selfPayEmpSelect');
+  if (empSel) empSel.innerHTML = selfPaySelectHtml('emp');
+  const relSel = document.getElementById('selfPayRelSelect');
+  if (relSel) relSel.innerHTML = selfPaySelectHtml('rel');
+}
+
 function renderForm() {
   const area = document.getElementById('formArea');
   const d = availability.find(x => x.date === selectedDate);
@@ -348,8 +447,44 @@ function renderForm() {
     <div class="panel">
       <div style="font-weight:700;margin-bottom:12px;color:var(--primary-dark);">已選擇：${escapeHtml(d.date)}（剩餘 ${d.remaining} 位）</div>
       <div class="row2">
-        <div class="field"><label>姓名 *</label><input id="fName"></div>
-        <div class="field"><label>部門 *</label><input id="fDept"></div>
+        <div class="field">
+          <label>姓名 *</label>
+          <input id="fName" list="empNameList" autocomplete="off">
+          <datalist id="empNameList">${employeeList.map(e => `<option value="${escapeHtml(e.name)}">`).join('')}</datalist>
+        </div>
+        <div class="field">
+          <label>部門 *</label>
+          <select id="fDept"><option value="">請選擇部門</option></select>
+          <input id="fDeptOther" placeholder="請輸入部門名稱" style="display:none;margin-top:6px;">
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>身份證字號 *</label><input id="fIdNumber" placeholder="A123456789"></div>
+        <div class="field">
+          <label>出生日期（民國年） *</label>
+          <div style="display:flex;gap:6px;">
+            <input id="fBirthYear" type="number" min="1" max="200" placeholder="年" style="width:33%;">
+            <select id="fBirthMonth" style="width:33%;">
+              <option value="">月</option>
+              ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join('')}
+            </select>
+            <select id="fBirthDay" style="width:34%;">
+              <option value="">日</option>
+              ${Array.from({length:31},(_,i)=>i+1).map(day=>`<option value="${day}">${day}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>手機號碼 *</label><input id="fPhone" type="tel" placeholder="0912345678"></div>
+        <div class="field">
+          <label>早餐（選填）</label>
+          <select id="fBreakfast">
+            <option value="">不指定</option>
+            <option value="葷食">葷食</option>
+            <option value="素食">素食</option>
+          </select>
+        </div>
       </div>
       <div class="row2">
         <div class="field"><label>報名人數（含本人） *</label><input id="fHeadcount" type="number" min="1" max="6" value="1"></div>
@@ -372,36 +507,146 @@ function renderForm() {
         </select>
         <div class="hint">若眷屬要選跟您不同的方案，請在這裡選擇；多位眷屬方案不同時，請在下方備註說明。</div>
       </div>
-      <div class="field"><label>備註（選填）</label><input id="fNote" placeholder="如需自費加購項目、或有特殊需求請填寫"></div>
+      <div class="field">
+        <label>員工加選自費項目（選填）</label>
+        <div style="display:flex;gap:8px;">
+          <select id="selfPayEmpSelect" style="flex:1;">${selfPaySelectHtml('emp')}</select>
+          <button type="button" class="btn ghost small" id="selfPayEmpAddBtn">加入</button>
+        </div>
+        <div id="selfPayEmpChips"></div>
+      </div>
+      <div class="field" id="relativeSelfPayField" style="display:none;">
+        <label>眷屬加選自費項目（選填）</label>
+        <div style="display:flex;gap:8px;">
+          <select id="selfPayRelSelect" style="flex:1;">${selfPaySelectHtml('rel')}</select>
+          <button type="button" class="btn ghost small" id="selfPayRelAddBtn">加入</button>
+        </div>
+        <div id="selfPayRelChips"></div>
+      </div>
+      <div class="field"><label>備註（選填）</label><input id="fNote" placeholder="如有特殊需求請填寫"></div>
       <button class="btn" id="submitBtn">確認報名</button>
       <div id="formMsg"></div>
     </div>`;
-  document.getElementById('submitBtn').addEventListener('click', submitForm);
-  document.getElementById('fHeadcount').addEventListener('input', toggleRelativePlanField);
-  toggleRelativePlanField();
+  selectedSelfPay = { emp: [], rel: [] };
+  renderSelfPayChips('emp');
+  renderSelfPayChips('rel');
+  document.getElementById('selfPayEmpAddBtn').addEventListener('click', () => {
+    const sel = document.getElementById('selfPayEmpSelect');
+    const item = selfPayItems.find(i => i.id === sel.value);
+    if (item) { selectedSelfPay.emp.push(item); renderSelfPayChips('emp'); sel.value = ''; }
+  });
+  document.getElementById('selfPayRelAddBtn').addEventListener('click', () => {
+    const sel = document.getElementById('selfPayRelSelect');
+    const item = selfPayItems.find(i => i.id === sel.value);
+    if (item) { selectedSelfPay.rel.push(item); renderSelfPayChips('rel'); sel.value = ''; }
+  });
+  refreshDeptSelectIfPresent();
+  document.getElementById('fDept').addEventListener('change', () => {
+    const other = document.getElementById('fDept').value === '__other__';
+    document.getElementById('fDeptOther').style.display = other ? 'block' : 'none';
+  });
+  document.getElementById('fName').addEventListener('input', () => {
+    const val = document.getElementById('fName').value.trim();
+    const match = employeeList.find(e => e.name === val);
+    if (match) {
+      const deptSel = document.getElementById('fDept');
+      const hasOption = Array.from(deptSel.options).some(o => o.value === match.dept);
+      if (hasOption) deptSel.value = match.dept;
+    }
+  });
+  document.getElementById('submitBtn').addEventListener('click', openConfirmModal);
+  document.getElementById('fHeadcount').addEventListener('input', toggleRelativeFields);
+  toggleRelativeFields();
   area.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
-function toggleRelativePlanField() {
+function toggleRelativeFields() {
   const headcount = parseInt(document.getElementById('fHeadcount').value, 10) || 1;
-  document.getElementById('relativePlanField').style.display = headcount > 1 ? 'block' : 'none';
+  const show = headcount > 1 ? 'block' : 'none';
+  document.getElementById('relativePlanField').style.display = show;
+  document.getElementById('relativeSelfPayField').style.display = show;
 }
-function submitForm() {
+
+function collectSelfPay(key) {
+  return selectedSelfPay[key].map(item => `${item.name}（NT$${item.price}）`).join('、');
+}
+
+let pendingPayload = null;
+
+function openConfirmModal() {
   const name = document.getElementById('fName').value.trim();
-  const dept = document.getElementById('fDept').value.trim();
+  const deptSel = document.getElementById('fDept').value;
+  const dept = deptSel === '__other__' ? document.getElementById('fDeptOther').value.trim() : deptSel;
+  const idNumber = document.getElementById('fIdNumber').value.trim();
+  const birthYear = document.getElementById('fBirthYear').value.trim();
+  const birthMonth = document.getElementById('fBirthMonth').value;
+  const birthDay = document.getElementById('fBirthDay').value;
+  const phone = document.getElementById('fPhone').value.trim();
+  const breakfast = document.getElementById('fBreakfast').value;
   const headcount = parseInt(document.getElementById('fHeadcount').value, 10) || 1;
   const relativeName = document.getElementById('fRelativeName').value.trim();
   const plan = document.getElementById('fPlan').value;
   const relativePlan = document.getElementById('fRelativePlan').value;
+  const note = document.getElementById('fNote').value.trim();
   const msg = document.getElementById('formMsg');
-  const btn = document.getElementById('submitBtn');
+
   if (!name || !dept) { msg.innerHTML = '<div class="msg err">請填寫姓名與部門。</div>'; return; }
+  if (!idNumber) { msg.innerHTML = '<div class="msg err">請填寫身份證字號。</div>'; return; }
+  if (!/^[A-Za-z][12]\d{8}$/.test(idNumber)) { msg.innerHTML = '<div class="msg err">身份證字號格式不正確，請確認（例如 A123456789）。</div>'; return; }
+  if (!birthYear || !birthMonth || !birthDay) { msg.innerHTML = '<div class="msg err">請完整填寫出生日期（民國年）。</div>'; return; }
+  if (!phone) { msg.innerHTML = '<div class="msg err">請填寫手機號碼。</div>'; return; }
+  if (!/^09\d{8}$/.test(phone)) { msg.innerHTML = '<div class="msg err">手機號碼格式不正確，請確認（例如 0912345678）。</div>'; return; }
   if (!plan) { msg.innerHTML = '<div class="msg err">請選擇本人健檢方案（A案或B案）。</div>'; return; }
-  btn.disabled = true; btn.textContent = '送出中…'; msg.innerHTML = '';
+  msg.innerHTML = '';
+
+  const birthDate = `民國${birthYear}年${birthMonth}月${birthDay}日`;
   const planText = (headcount > 1 && relativePlan && relativePlan !== plan)
     ? `本人：${plan}｜眷屬：${relativePlan}`
     : plan;
-  callApi({ action: 'submit', payload: { name, dept, relativeName, plan: planText, headcount, date: selectedDate, itemChoicesText: document.getElementById('fNote').value.trim() } })
+  const selfPayEmployee = collectSelfPay('emp');
+  const selfPayRelative = headcount > 1 ? collectSelfPay('rel') : '';
+
+  pendingPayload = {
+    name, dept, idNumber, birthDate, phone, breakfast,
+    relativeName, plan: planText, headcount, date: selectedDate,
+    selfPayEmployee, selfPayRelative, itemChoicesText: note
+  };
+
+  const rows = [
+    ['日期', selectedDate],
+    ['姓名', name], ['部門', dept],
+    ['身份證字號', idNumber], ['出生日期', birthDate],
+    ['手機號碼', phone], ['早餐', breakfast || '未指定'],
+    ['報名人數', headcount + ' 人'],
+    ['眷屬姓名', relativeName || '—'],
+    ['健檢方案', planText],
+    ['員工自費項目', selfPayEmployee || '無'],
+  ];
+  if (headcount > 1) rows.push(['眷屬自費項目', selfPayRelative || '無']);
+  rows.push(['備註', note || '無']);
+
+  document.getElementById('confirmSummary').innerHTML = rows.map(([k, v]) =>
+    `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line);">
+       <span style="color:var(--ink-soft);">${escapeHtml(k)}</span><span style="text-align:right;font-weight:700;">${escapeHtml(v)}</span>
+     </div>`
+  ).join('');
+  document.getElementById('confirmModal').style.display = 'flex';
+}
+
+document.getElementById('confirmCancelBtn').addEventListener('click', () => {
+  document.getElementById('confirmModal').style.display = 'none';
+});
+document.getElementById('confirmSubmitBtn').addEventListener('click', () => {
+  if (!pendingPayload) return;
+  const msg = document.getElementById('formMsg');
+  const btn = document.getElementById('submitBtn');
+  const confirmBtn = document.getElementById('confirmSubmitBtn');
+  confirmBtn.disabled = true; confirmBtn.textContent = '送出中…';
+  btn.disabled = true; btn.textContent = '送出中…';
+
+  callApi({ action: 'submit', payload: pendingPayload })
     .then(res => {
+      document.getElementById('confirmModal').style.display = 'none';
+      confirmBtn.disabled = false; confirmBtn.textContent = '確認送出';
       if (res.success) {
         msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message)}</div>`;
         btn.textContent = '已報名';
@@ -413,10 +658,12 @@ function submitForm() {
       }
     })
     .catch(() => {
+      document.getElementById('confirmModal').style.display = 'none';
+      confirmBtn.disabled = false; confirmBtn.textContent = '確認送出';
       msg.innerHTML = '<div class="msg err">送出失敗，請稍後再試一次。</div>';
       btn.disabled = false; btn.textContent = '確認報名';
     });
-}
+});
 
 // ================= 管理後台 =================
 document.getElementById('pinToggle').addEventListener('click', () => {
@@ -457,6 +704,7 @@ function refreshCurrentAdminView() {
   else if (currentAdminView === 'settings') loadSettings();
   else if (currentAdminView === 'unregistered') loadUnregistered();
   else if (currentAdminView === 'items') loadItemsAdmin();
+  else if (currentAdminView === 'selfpay') loadSelfPayAdmin();
 }
 
 document.querySelectorAll('.admin-tab').forEach(tab => {
@@ -507,11 +755,16 @@ function loadRoster() {
 function renderRoster(rows) {
   const wrap = document.getElementById('rosterTableWrap');
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的報名紀錄</div>'; return; }
-  wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>部門</th><th>眷屬姓名</th><th>人數</th><th>日期</th><th>方案</th><th>備註</th><th>更改日期</th><th>操作</th></tr></thead>
+  wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>部門</th><th>身份證字號</th><th>出生日期</th><th>手機</th><th>早餐</th><th>眷屬姓名</th><th>人數</th><th>日期</th><th>方案</th><th>員工自費</th><th>眷屬自費</th><th>備註</th><th>更改日期</th><th>操作</th></tr></thead>
     <tbody>${rows.map((r,idx) => `<tr>
-      <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.dept)}</td><td>${escapeHtml(r.relativeName||'—')}</td><td>${r.headcount}</td><td>${escapeHtml(r.date)}</td>
+      <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.dept)}</td>
+      <td>${escapeHtml(r.idNumber||'—')}</td><td>${escapeHtml(r.birthDate||'—')}</td>
+      <td>${escapeHtml(r.phone||'—')}</td><td>${escapeHtml(r.breakfast||'—')}</td>
+      <td>${escapeHtml(r.relativeName||'—')}</td><td>${r.headcount}</td><td>${escapeHtml(r.date)}</td>
       <td>${escapeHtml(r.plan||'—')}</td>
-      <td style="max-width:200px;font-size:12px;">${escapeHtml(r.itemChoicesText||'—')}</td>
+      <td style="max-width:160px;font-size:12px;">${escapeHtml(r.selfPayEmployee||'—')}</td>
+      <td style="max-width:160px;font-size:12px;">${escapeHtml(r.selfPayRelative||'—')}</td>
+      <td style="max-width:160px;font-size:12px;">${escapeHtml(r.itemChoicesText||'—')}</td>
       <td>
         <select class="dateChangeSelect" data-idx="${idx}" style="padding:4px 6px;font-size:12px;">
           ${currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('')}
@@ -559,10 +812,16 @@ function openEditModal(r) {
   editingTimestamp = r.timestamp;
   document.getElementById('editName').value = r.name;
   document.getElementById('editDept').value = r.dept;
+  document.getElementById('editIdNumber').value = r.idNumber || '';
+  document.getElementById('editBirthDate').value = r.birthDate || '';
+  document.getElementById('editPhone').value = r.phone || '';
+  document.getElementById('editBreakfast').value = r.breakfast || '';
   document.getElementById('editHeadcount').value = r.headcount;
   document.getElementById('editRelativeName').value = r.relativeName || '';
   document.getElementById('editDate').innerHTML = currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('');
   document.getElementById('editPlan').value = r.plan || '';
+  document.getElementById('editSelfPayEmployee').value = r.selfPayEmployee || '';
+  document.getElementById('editSelfPayRelative').value = r.selfPayRelative || '';
   document.getElementById('editNote').value = r.itemChoicesText || '';
   document.getElementById('editMsg').innerHTML = '';
   document.getElementById('editModal').style.display = 'flex';
@@ -574,10 +833,16 @@ document.getElementById('editSaveBtn').addEventListener('click', () => {
   const fields = {
     name: document.getElementById('editName').value.trim(),
     dept: document.getElementById('editDept').value.trim(),
+    idNumber: document.getElementById('editIdNumber').value.trim(),
+    birthDate: document.getElementById('editBirthDate').value,
+    phone: document.getElementById('editPhone').value.trim(),
+    breakfast: document.getElementById('editBreakfast').value,
     headcount: document.getElementById('editHeadcount').value,
     relativeName: document.getElementById('editRelativeName').value.trim(),
     date: document.getElementById('editDate').value,
     plan: document.getElementById('editPlan').value.trim(),
+    selfPayEmployee: document.getElementById('editSelfPayEmployee').value.trim(),
+    selfPayRelative: document.getElementById('editSelfPayRelative').value.trim(),
     itemChoicesText: document.getElementById('editNote').value.trim()
   };
   callApi({ action: 'editRegistration', pin: adminPin, timestamp: editingTimestamp, fields }).then(res => {
@@ -727,8 +992,42 @@ document.getElementById('uploadItemsBtn').addEventListener('click', async () => 
   loadItemsAdmin();
 });
 
+// ---- 自費項目設定 ----
+function loadSelfPayAdmin() {
+  callApi({ action: 'selfPayItems' }).then(res => renderSelfPayAdmin(res.items || []));
+}
+function renderSelfPayAdmin(items) {
+  const wrap = document.getElementById('selfPayListWrap');
+  if (items.length === 0) { wrap.innerHTML = '<div class="empty">尚未新增任何自費項目</div>'; return; }
+  wrap.innerHTML = items.map(i => `
+    <div class="settings-row">
+      <span class="grow">${escapeHtml(i.name)}　NT$${escapeHtml(String(i.price))}</span>
+      <button class="btn danger small delSelfPayBtn" data-id="${escapeHtml(i.id)}">刪除</button>
+    </div>`).join('');
+  wrap.querySelectorAll('.delSelfPayBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('確定要刪除這個自費項目嗎？')) return;
+      callApi({ action: 'deleteSelfPayItem', pin: adminPin, id: btn.dataset.id }).then(() => loadSelfPayAdmin());
+    });
+  });
+}
+document.getElementById('addSelfPayBtn').addEventListener('click', () => {
+  const name = document.getElementById('selfPayName').value.trim();
+  const price = document.getElementById('selfPayPrice').value;
+  const msg = document.getElementById('selfPayMsg');
+  if (!name) { msg.innerHTML = '<div class="msg err">請輸入項目名稱</div>'; return; }
+  callApi({ action: 'saveSelfPayItem', pin: adminPin, item: { name, price } }).then(res => {
+    msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message||'已新增')}</div>`;
+    document.getElementById('selfPayName').value = '';
+    document.getElementById('selfPayPrice').value = '';
+    loadSelfPayAdmin();
+  });
+});
+
 loadAvailability();
 loadItemsAsync();
+loadEmployeesAsync();
+loadSelfPayItemsAsync();
 </script>
 </body>
 </html>
