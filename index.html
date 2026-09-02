@@ -385,7 +385,6 @@ function loadEmployeesAsync() {
   callApi({ action: 'employeesPublic' }).then(res => {
     employeeList = (res && res.employees) || [];
     refreshDeptSelectIfPresent();
-    refreshNameDatalist();
   }).catch(() => {});
 }
 function loadSelfPayItemsAsync() {
@@ -401,10 +400,6 @@ function refreshDeptSelectIfPresent() {
   const current = sel.value;
   sel.innerHTML = '<option value="">請選擇部門</option>' + depts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('') + '<option value="__other__">其他（手動輸入）</option>';
   if (depts.includes(current)) sel.value = current;
-}
-function refreshNameDatalist() {
-  const dl = document.getElementById('empNameList');
-  if (dl) dl.innerHTML = employeeList.map(e => `<option value="${escapeHtml(e.name)}">`).join('');
 }
 
 // ---------- 多人員報名表單 ----------
@@ -426,7 +421,6 @@ function ensureFormInitialized() {
         <input id="fDeptOther" placeholder="請輸入部門名稱" style="display:none;margin-top:6px;">
         <div class="hint">此部門套用在整筆報名（含所有眷屬），用於名冊分類。</div>
       </div>
-      <datalist id="empNameList"></datalist>
       <div id="personsContainer"></div>
       <button type="button" class="btn ghost" id="addPersonBtn" style="margin-top:6px;">＋ 新增眷屬</button>
       <div class="field" style="margin-top:16px;"><label>備註（選填）</label><input id="fNote" placeholder="如有特殊需求請填寫"></div>
@@ -434,7 +428,6 @@ function ensureFormInitialized() {
       <div id="formMsg"></div>
     </div>`;
   refreshDeptSelectIfPresent();
-  refreshNameDatalist();
   document.getElementById('fDept').addEventListener('change', () => {
     const other = document.getElementById('fDept').value === '__other__';
     document.getElementById('fDeptOther').style.display = other ? 'block' : 'none';
@@ -475,14 +468,17 @@ function addPersonCard(identity) {
       ${isMain ? '' : `<button type="button" class="btn danger small removePersonBtn" data-id="${id}">移除此人</button>`}
     </div>
     <div class="row2">
-      <div class="field"><label>姓名 *</label><input id="p${id}_name" ${isMain ? 'list="empNameList"' : ''} autocomplete="off"></div>
+      <div class="field"><label>姓名 *</label><input id="p${id}_name" autocomplete="off"></div>
       <div class="field"><label>身份證字號 *</label><input id="p${id}_idnum" placeholder="A123456789"></div>
     </div>
     <div class="row2">
       <div class="field">
         <label>出生日期（民國年） *</label>
         <div style="display:flex;gap:6px;">
-          <input id="p${id}_byear" type="number" min="1" max="200" placeholder="年" style="width:33%;">
+          <select id="p${id}_byear" style="width:33%;">
+            <option value="">年</option>
+            ${Array.from({length:100},(_,i)=>(new Date().getFullYear()-1911)-i).map(y=>`<option value="${y}">${y}</option>`).join('')}
+          </select>
           <select id="p${id}_bmonth" style="width:33%;">
             <option value="">月</option>
             ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join('')}
@@ -776,15 +772,35 @@ function renderDashboard(data) {
 }
 
 let currentDateOptions = [];
+// 通用管理後台暫存：先秒顯示上次看到的資料，同時一定會呼叫 API 取得最新版本
+function getAdminCache(key, ttl) {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem('hc_admin_' + key) || 'null');
+    if (cached && (Date.now() - cached.ts) < ttl) return cached.data;
+  } catch (e) {}
+  return null;
+}
+function setAdminCache(key, data) {
+  try { sessionStorage.setItem('hc_admin_' + key, JSON.stringify({ ts: Date.now(), data })); } catch (e) {}
+}
+const ADMIN_CACHE_TTL = 8000;
+
 function loadRoster() {
   const dept = document.getElementById('deptFilter').value;
-  callApi({ action: 'rosterInit', pin: adminPin, dept }).then(res => {
+  const cacheKey = 'roster_' + dept;
+  const applyRoster = (res) => {
     currentDateOptions = (res.dashboard && res.dashboard.dates || []).map(d => d.date);
     const sel = document.getElementById('deptFilter');
     const currentVal = sel.value;
     sel.innerHTML = '<option value="">全部部門</option>' + (res.depts||[]).map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
     sel.value = currentVal;
     renderRoster(res.rows || []);
+  };
+  const cached = getAdminCache(cacheKey, ADMIN_CACHE_TTL);
+  if (cached) applyRoster(cached);
+  callApi({ action: 'rosterInit', pin: adminPin, dept }).then(res => {
+    applyRoster(res);
+    setAdminCache(cacheKey, res);
   });
 }
 function renderRoster(rows) {
@@ -894,10 +910,9 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   });
 });
 
-function loadSettings() {
-  callApi({ action: 'dashboard', pin: adminPin }).then(data => {
-    const list = document.getElementById('settingsList');
-    if (!data.dates || data.dates.length === 0) { list.innerHTML = '<div class="empty">尚未設定任何場次</div>'; return; }
+function renderSettingsList(data) {
+  const list = document.getElementById('settingsList');
+  if (!data.dates || data.dates.length === 0) { list.innerHTML = '<div class="empty">尚未設定任何場次</div>'; return; }
   list.innerHTML = data.dates.map(d => `
     <div class="settings-row">
       <div class="grow">
@@ -908,19 +923,26 @@ function loadSettings() {
       <button class="btn ghost small saveCapBtn" data-date="${escapeHtml(d.date)}">更新上限</button>
       <button class="btn danger small delDateBtn" data-date="${escapeHtml(d.date)}">刪除場次</button>
     </div>`).join('');
-    document.querySelectorAll('.saveCapBtn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const date = btn.dataset.date;
-        const input = document.querySelector(`.capInput[data-date="${CSS.escape(date)}"]`);
-        callApi({ action: 'updateCapacity', pin: adminPin, date, capacity: Number(input.value) }).then(() => { loadSettings(); });
-      });
+  document.querySelectorAll('.saveCapBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const date = btn.dataset.date;
+      const input = document.querySelector(`.capInput[data-date="${CSS.escape(date)}"]`);
+      callApi({ action: 'updateCapacity', pin: adminPin, date, capacity: Number(input.value) }).then(() => { loadSettings(); });
     });
-    document.querySelectorAll('.delDateBtn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        if (!confirm('確定要刪除「' + btn.dataset.date + '」這個場次嗎？')) return;
-        callApi({ action: 'removeDate', pin: adminPin, date: btn.dataset.date }).then(() => { loadSettings(); });
-      });
+  });
+  document.querySelectorAll('.delDateBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('確定要刪除「' + btn.dataset.date + '」這個場次嗎？')) return;
+      callApi({ action: 'removeDate', pin: adminPin, date: btn.dataset.date }).then(() => { loadSettings(); });
     });
+  });
+}
+function loadSettings() {
+  const cached = getAdminCache('settings', ADMIN_CACHE_TTL);
+  if (cached) renderSettingsList(cached);
+  callApi({ action: 'dashboard', pin: adminPin }).then(data => {
+    renderSettingsList(data);
+    setAdminCache('settings', data);
   });
 }
 document.getElementById('addDateBtn').addEventListener('click', () => {
@@ -936,13 +958,21 @@ document.getElementById('addDateBtn').addEventListener('click', () => {
 function loadUnregistered() {
   refreshUnregisteredTable();
 }
+function renderUnregistered(res) {
+  document.getElementById('empPaste').value = (res.employees||[]).map(e => e.name + ',' + e.dept).join('\n');
+  const wrap = document.getElementById('unregTableWrap');
+  const rows = res.unregistered || [];
+  if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有名單，或全部人都已報名</div>'; return; }
+  wrap.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px;">${rows.map(r =>
+    `<span style="background:#F6E4E1;color:var(--danger);border-radius:20px;padding:4px 12px;font-size:12.5px;font-weight:700;white-space:nowrap;">${escapeHtml(r.name)}（${escapeHtml(r.dept)}）</span>`
+  ).join('')}</div>`;
+}
 function refreshUnregisteredTable() {
+  const cached = getAdminCache('unregistered', ADMIN_CACHE_TTL);
+  if (cached) renderUnregistered(cached);
   callApi({ action: 'unregistered', pin: adminPin }).then(res => {
-    document.getElementById('empPaste').value = (res.employees||[]).map(e => e.name + ',' + e.dept).join('\n');
-    const wrap = document.getElementById('unregTableWrap');
-    const rows = res.unregistered || [];
-    if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有名單，或全部人都已報名</div>'; return; }
-    wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>部門</th></tr></thead><tbody>${rows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.dept)}</td></tr>`).join('')}</tbody></table>`;
+    renderUnregistered(res);
+    setAdminCache('unregistered', res);
   });
 }
 document.getElementById('saveEmpBtn').addEventListener('click', () => {
@@ -951,7 +981,13 @@ document.getElementById('saveEmpBtn').addEventListener('click', () => {
 
 // ---- 健檢項目照片 ----
 function loadItemsAdmin() {
-  callApi({ action: 'getItems' }).then(res => renderItemsAdmin(res.items || []));
+  const cached = getAdminCache('items', ADMIN_CACHE_TTL);
+  if (cached) renderItemsAdmin(cached);
+  callApi({ action: 'getItems' }).then(res => {
+    const items = res.items || [];
+    renderItemsAdmin(items);
+    setAdminCache('items', items);
+  });
 }
 function renderItemsAdmin(items) {
   const wrap = document.getElementById('itemsListWrap');
@@ -1024,7 +1060,13 @@ document.getElementById('uploadItemsBtn').addEventListener('click', async () => 
 
 // ---- 自費項目設定 ----
 function loadSelfPayAdmin() {
-  callApi({ action: 'selfPayItems' }).then(res => renderSelfPayAdmin(res.items || []));
+  const cached = getAdminCache('selfpay', ADMIN_CACHE_TTL);
+  if (cached) renderSelfPayAdmin(cached);
+  callApi({ action: 'selfPayItems' }).then(res => {
+    const items = res.items || [];
+    renderSelfPayAdmin(items);
+    setAdminCache('selfpay', items);
+  });
 }
 function renderSelfPayAdmin(items) {
   const wrap = document.getElementById('selfPayListWrap');
