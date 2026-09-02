@@ -241,8 +241,10 @@ function renderItems() {
     </div>`;
   document.querySelectorAll('.item-card img').forEach(img => {
     img.addEventListener('click', () => {
+      const lightbox = document.getElementById('lightbox');
       document.getElementById('lightboxImg').src = img.src;
-      document.getElementById('lightbox').style.display = 'flex';
+      lightbox.style.display = 'flex';
+      lightbox.scrollTop = 0;
     });
   });
 }
@@ -409,11 +411,32 @@ document.getElementById('pinSubmit').addEventListener('click', () => {
       document.getElementById('pinGate').style.display = 'none';
       document.getElementById('adminContent').style.display = 'block';
       loadDashboard();
+      startAdminPolling();
     } else {
       msg.innerHTML = '<div class="msg err">密碼錯誤</div>';
     }
   });
 });
+
+let currentAdminView = 'dashboard';
+let adminPollTimer = null;
+function startAdminPolling() {
+  if (adminPollTimer) clearInterval(adminPollTimer);
+  adminPollTimer = setInterval(() => {
+    if (document.getElementById('editModal').style.display === 'flex') return; // 編輯視窗開啟時不打擾
+    const active = document.activeElement;
+    const isTyping = active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
+    if (isTyping) return; // 使用者正在輸入時不打擾，避免蓋掉還沒送出的內容
+    refreshCurrentAdminView();
+  }, 6000);
+}
+function refreshCurrentAdminView() {
+  if (currentAdminView === 'dashboard') loadDashboard();
+  else if (currentAdminView === 'roster') loadRoster();
+  else if (currentAdminView === 'settings') loadSettings();
+  else if (currentAdminView === 'unregistered') loadUnregistered();
+  else if (currentAdminView === 'items') loadItemsAdmin();
+}
 
 document.querySelectorAll('.admin-tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -421,10 +444,8 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     document.querySelectorAll('.admin-view').forEach(v => v.style.display = 'none');
     tab.classList.add('active');
     document.getElementById(tab.dataset.view + 'View').style.display = 'block';
-    if (tab.dataset.view === 'roster') loadRoster();
-    if (tab.dataset.view === 'settings') loadSettings();
-    if (tab.dataset.view === 'unregistered') loadUnregistered();
-    if (tab.dataset.view === 'items') loadItemsAdmin();
+    currentAdminView = tab.dataset.view;
+    refreshCurrentAdminView();
   });
 });
 
