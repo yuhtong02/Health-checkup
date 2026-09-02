@@ -115,10 +115,13 @@
 
   <!-- 報名頁 -->
   <div id="signup" class="view active">
-    <div id="itemsArea"></div>
-    <div class="sec-title"><span class="n">02</span> 選擇檢查場次</div>
-    <div id="dateGrid" class="grid"><div class="loading">場次載入中…</div></div>
-    <div id="formArea"></div>
+    <div id="signupLoading" class="loading" style="text-align:center;padding:50px 0;">頁面載入中…</div>
+    <div id="signupContent" style="display:none;">
+      <div id="itemsArea"></div>
+      <div class="sec-title"><span class="n">02</span> 選擇檢查場次</div>
+      <div id="dateGrid" class="grid"></div>
+      <div id="formArea"></div>
+    </div>
   </div>
 
   <div id="lightbox" style="display:none;position:fixed;inset:0;background:rgba(22,36,31,.9);z-index:999;cursor:zoom-out;overflow:auto;padding:20px;">
@@ -160,6 +163,28 @@
           <button class="btn small" id="exportBtn">匯出 CSV</button>
         </div>
         <div id="rosterTableWrap"></div>
+      </div>
+
+      <div id="editModal" style="display:none;position:fixed;inset:0;background:rgba(22,36,31,.6);z-index:998;align-items:center;justify-content:center;padding:20px;">
+        <div class="panel" style="max-width:480px;width:100%;max-height:85vh;overflow:auto;">
+          <div style="font-weight:700;margin-bottom:14px;">編輯報名資料</div>
+          <div class="row2">
+            <div class="field"><label>姓名</label><input id="editName"></div>
+            <div class="field"><label>部門</label><input id="editDept"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>人數</label><input id="editHeadcount" type="number" min="1"></div>
+            <div class="field"><label>眷屬姓名</label><input id="editRelativeName"></div>
+          </div>
+          <div class="field"><label>日期</label><select id="editDate"></select></div>
+          <div class="field"><label>方案</label><input id="editPlan"></div>
+          <div class="field"><label>備註</label><input id="editNote"></div>
+          <div style="display:flex;gap:10px;margin-top:14px;">
+            <button class="btn" id="editSaveBtn" style="flex:1;">儲存</button>
+            <button class="btn ghost" id="editCancelBtn" style="flex:1;">取消</button>
+          </div>
+          <div id="editMsg"></div>
+        </div>
       </div>
 
       <div id="settingsView" class="admin-view" style="display:none;">
@@ -255,6 +280,10 @@ function loadInit() {
   callApi({ action: 'init' }).then(res => {
     if (res.availability && res.availability.success) renderDates(res.availability.dates);
     if (res.items) { healthItems = res.items.items || []; renderItems(); }
+    document.getElementById('signupLoading').style.display = 'none';
+    document.getElementById('signupContent').style.display = 'block';
+  }).catch(() => {
+    document.getElementById('signupLoading').textContent = '載入失敗，請重新整理頁面再試一次。';
   });
 }
 function loadAvailability() {
@@ -304,32 +333,51 @@ function renderForm() {
         <div class="field"><label>眷屬姓名</label><input id="fRelativeName" placeholder="多位用頓號分隔"></div>
       </div>
       <div class="field">
-        <label>健檢方案 *</label>
+        <label>本人健檢方案 *</label>
         <select id="fPlan">
           <option value="">請選擇方案</option>
           <option value="A案">A案（6000元，含骨質密度檢查，不含甲狀腺超音波）</option>
           <option value="B案">B案（6000元，含甲狀腺超音波，不含骨質密度檢查）</option>
         </select>
       </div>
+      <div class="field" id="relativePlanField" style="display:none;">
+        <label>眷屬健檢方案</label>
+        <select id="fRelativePlan">
+          <option value="">與本人相同</option>
+          <option value="A案">A案（6000元，含骨質密度檢查，不含甲狀腺超音波）</option>
+          <option value="B案">B案（6000元，含甲狀腺超音波，不含骨質密度檢查）</option>
+        </select>
+        <div class="hint">若眷屬要選跟您不同的方案，請在這裡選擇；多位眷屬方案不同時，請在下方備註說明。</div>
+      </div>
       <div class="field"><label>備註（選填）</label><input id="fNote" placeholder="如需自費加購項目、或有特殊需求請填寫"></div>
       <button class="btn" id="submitBtn">確認報名</button>
       <div id="formMsg"></div>
     </div>`;
   document.getElementById('submitBtn').addEventListener('click', submitForm);
+  document.getElementById('fHeadcount').addEventListener('input', toggleRelativePlanField);
+  toggleRelativePlanField();
   area.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function toggleRelativePlanField() {
+  const headcount = parseInt(document.getElementById('fHeadcount').value, 10) || 1;
+  document.getElementById('relativePlanField').style.display = headcount > 1 ? 'block' : 'none';
 }
 function submitForm() {
   const name = document.getElementById('fName').value.trim();
   const dept = document.getElementById('fDept').value.trim();
-  const headcount = document.getElementById('fHeadcount').value;
+  const headcount = parseInt(document.getElementById('fHeadcount').value, 10) || 1;
   const relativeName = document.getElementById('fRelativeName').value.trim();
   const plan = document.getElementById('fPlan').value;
+  const relativePlan = document.getElementById('fRelativePlan').value;
   const msg = document.getElementById('formMsg');
   const btn = document.getElementById('submitBtn');
   if (!name || !dept) { msg.innerHTML = '<div class="msg err">請填寫姓名與部門。</div>'; return; }
-  if (!plan) { msg.innerHTML = '<div class="msg err">請選擇健檢方案（A案或B案）。</div>'; return; }
+  if (!plan) { msg.innerHTML = '<div class="msg err">請選擇本人健檢方案（A案或B案）。</div>'; return; }
   btn.disabled = true; btn.textContent = '送出中…'; msg.innerHTML = '';
-  callApi({ action: 'submit', payload: { name, dept, relativeName, plan, headcount: parseInt(headcount,10)||1, date: selectedDate, itemChoicesText: document.getElementById('fNote').value.trim() } })
+  const planText = (headcount > 1 && relativePlan && relativePlan !== plan)
+    ? `本人：${plan}｜眷屬：${relativePlan}`
+    : plan;
+  callApi({ action: 'submit', payload: { name, dept, relativeName, plan: planText, headcount, date: selectedDate, itemChoicesText: document.getElementById('fNote').value.trim() } })
     .then(res => {
       if (res.success) {
         msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message)}</div>`;
@@ -426,7 +474,10 @@ function renderRoster(rows) {
         </select>
         <button class="btn ghost small changeDateBtn" data-idx="${idx}" style="margin-left:4px;">更改</button>
       </td>
-      <td><button class="btn danger small deleteRegBtn" data-idx="${idx}">刪除</button></td>
+      <td>
+        <button class="btn ghost small editRegBtn" data-idx="${idx}">編輯</button>
+        <button class="btn danger small deleteRegBtn" data-idx="${idx}">刪除</button>
+      </td>
     </tr>`).join('')}</tbody></table>`;
 
   wrap.querySelectorAll('.changeDateBtn').forEach(btn => {
@@ -454,7 +505,46 @@ function renderRoster(rows) {
       });
     });
   });
+  wrap.querySelectorAll('.editRegBtn').forEach(btn => {
+    btn.addEventListener('click', () => openEditModal(rows[btn.dataset.idx]));
+  });
 }
+
+let editingTimestamp = null;
+function openEditModal(r) {
+  editingTimestamp = r.timestamp;
+  document.getElementById('editName').value = r.name;
+  document.getElementById('editDept').value = r.dept;
+  document.getElementById('editHeadcount').value = r.headcount;
+  document.getElementById('editRelativeName').value = r.relativeName || '';
+  document.getElementById('editDate').innerHTML = currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('');
+  document.getElementById('editPlan').value = r.plan || '';
+  document.getElementById('editNote').value = r.itemChoicesText || '';
+  document.getElementById('editMsg').innerHTML = '';
+  document.getElementById('editModal').style.display = 'flex';
+}
+document.getElementById('editCancelBtn').addEventListener('click', () => {
+  document.getElementById('editModal').style.display = 'none';
+});
+document.getElementById('editSaveBtn').addEventListener('click', () => {
+  const fields = {
+    name: document.getElementById('editName').value.trim(),
+    dept: document.getElementById('editDept').value.trim(),
+    headcount: document.getElementById('editHeadcount').value,
+    relativeName: document.getElementById('editRelativeName').value.trim(),
+    date: document.getElementById('editDate').value,
+    plan: document.getElementById('editPlan').value.trim(),
+    itemChoicesText: document.getElementById('editNote').value.trim()
+  };
+  callApi({ action: 'editRegistration', pin: adminPin, timestamp: editingTimestamp, fields }).then(res => {
+    if (res.success) {
+      document.getElementById('editModal').style.display = 'none';
+      loadRoster(); loadDashboard();
+    } else {
+      document.getElementById('editMsg').innerHTML = `<div class="msg err">${escapeHtml(res.message||'更新失敗')}</div>`;
+    }
+  });
+});
 document.getElementById('deptFilter').addEventListener('change', loadRoster);
 document.getElementById('refreshRoster').addEventListener('click', loadRoster);
 document.getElementById('exportBtn').addEventListener('click', () => {
