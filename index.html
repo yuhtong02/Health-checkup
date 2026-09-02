@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>健康檢查場次報名</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F5F7F3; --surface:#FFFFFF; --ink:#16241F; --ink-soft:#5B6E64;
+    --primary:#0F6D66; --primary-dark:#0B4F4A; --primary-light:#E4F1EE;
+    --accent:#E8A33D; --danger:#C1473B; --line:#DCE5DF; --radius:16px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Noto Sans TC',sans-serif;line-height:1.6;}
+  .wrap{max-width:980px;margin:0 auto;padding:28px 20px 70px;}
+  header{margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;}
+  .eyebrow{font-size:13px;letter-spacing:.12em;color:var(--primary);font-weight:700;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+  .eyebrow::before{content:"";width:18px;height:2px;background:var(--accent);display:inline-block;}
+  h1{font-family:'Noto Serif TC',serif;font-weight:700;font-size:clamp(22px,4vw,32px);margin:0 0 6px;color:var(--primary-dark);}
+  .sub{color:var(--ink-soft);font-size:14px;max-width:560px;}
+  .tabs{display:flex;gap:4px;}
+  .tab-btn{padding:8px 16px;border-radius:20px;border:1px solid var(--line);background:var(--surface);font-size:13px;font-weight:700;color:var(--ink-soft);cursor:pointer;font-family:inherit;}
+  .tab-btn.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+
+  .view{display:none;} .view.active{display:block;}
+
+  .sec-title{font-family:'Noto Serif TC',serif;font-size:18px;font-weight:700;margin:30px 0 14px;color:var(--ink);display:flex;align-items:baseline;gap:10px;}
+  .sec-title .n{font-size:12px;color:var(--primary);font-weight:700;letter-spacing:.08em;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;}
+  .ticket{position:relative;background:var(--surface);border-radius:var(--radius);padding:16px 16px 14px;border:1px solid var(--line);cursor:pointer;transition:.15s;}
+  .ticket:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(15,109,102,.12);border-color:var(--primary);}
+  .ticket.selected{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-light) inset;}
+  .ticket.full{opacity:.5;cursor:not-allowed;}
+  .ticket.full:hover{transform:none;box-shadow:none;border-color:var(--line);}
+  .ticket-date{font-family:'Noto Serif TC',serif;font-size:17px;font-weight:700;color:var(--primary-dark);margin-bottom:10px;}
+  .bar{height:10px;border-radius:6px;background:var(--line);overflow:hidden;margin-bottom:8px;}
+  .bar-fill{height:100%;background:linear-gradient(90deg,var(--primary),var(--primary-dark));}
+  .bar-fill.warn{background:linear-gradient(90deg,var(--accent),#c47f1f);}
+  .bar-fill.full{background:linear-gradient(90deg,var(--danger),#8f342a);}
+  .count-row{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-soft);}
+  .count-row b{color:var(--ink);}
+  .pill{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--primary-light);color:var(--primary-dark);}
+  .pill.full{background:#F6E4E1;color:var(--danger);}
+
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-top:6px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:5px;}
+  .field input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;font-size:14.5px;font-family:inherit;background:#FAFCFB;color:var(--ink);}
+  textarea{min-height:130px;resize:vertical;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  @media(max-width:520px){.row2{grid-template-columns:1fr;}}
+  .btn{background:var(--primary);color:#fff;border:none;border-radius:9px;padding:11px 20px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;}
+  .btn:hover{background:var(--primary-dark);}
+  .btn:disabled{background:#A9BAB4;}
+  .btn.ghost{background:transparent;color:var(--primary);border:1px solid var(--primary);}
+  .btn.danger{background:var(--danger);}
+  .btn.small{padding:6px 12px;font-size:12.5px;}
+  .msg{margin-top:12px;padding:11px 13px;border-radius:9px;font-size:13.5px;}
+  .msg.ok{background:var(--primary-light);color:var(--primary-dark);}
+  .msg.err{background:#F6E4E1;color:var(--danger);}
+  .loading{color:var(--ink-soft);font-size:14px;padding:20px 0;}
+  .hint{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+
+  /* 健檢項目 */
+  .item-group{margin-bottom:18px;}
+  .item-group-title{font-size:13px;font-weight:700;color:var(--ink-soft);margin-bottom:8px;}
+  .item-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;}
+  .item-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  .item-card img{width:100%;height:110px;object-fit:cover;cursor:zoom-in;display:block;background:var(--primary-light);}
+  .item-card .item-body{padding:10px 12px;}
+  .item-card .item-name{font-size:13px;font-weight:700;margin-bottom:2px;}
+  .item-card .item-price{font-size:12px;color:var(--accent);font-weight:700;}
+  .item-card label{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-soft);cursor:pointer;margin-top:6px;}
+  .item-card.choosable{border-color:var(--line);}
+  .item-card.checked{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-light) inset;}
+
+  /* Admin */
+  .pin-gate{max-width:340px;margin:60px auto;text-align:center;}
+  .pin-gate input{text-align:center;font-size:20px;letter-spacing:4px;}
+  .admin-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px;flex-wrap:wrap;}
+  .admin-tab{padding:9px 14px;font-size:13.5px;font-weight:700;color:var(--ink-soft);cursor:pointer;border-bottom:2px solid transparent;}
+  .admin-tab.active{color:var(--primary-dark);border-bottom-color:var(--primary);}
+  .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px;}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;}
+  .stat .num{font-size:22px;font-weight:700;color:var(--primary-dark);}
+  .stat .lbl{font-size:11.5px;color:var(--ink-soft);}
+  table{width:100%;border-collapse:collapse;font-size:13px;background:var(--surface);border-radius:var(--radius);overflow:hidden;}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);}
+  th{background:var(--primary-light);color:var(--primary-dark);font-size:11px;text-transform:uppercase;}
+  .settings-row{display:flex;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+  .settings-row .grow{flex:1;font-size:13.5px;}
+  .add-row{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;margin-top:14px;align-items:end;}
+  .add-row label{display:block;font-size:11.5px;color:var(--ink-soft);margin-bottom:4px;font-weight:700;}
+  .empty{color:var(--ink-soft);font-size:13px;padding:22px 0;text-align:center;}
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">員工暨眷屬健康檢查</div>
+      <h1>健康檢查場次報名</h1>
+      <p class="sub">請選擇一個檢查日期並填寫報名資料，若攜帶眷屬同行，請直接填寫總人數。</p>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn active" data-page="signup">同仁報名</button>
+      <button class="tab-btn" data-page="admin">管理後台</button>
+    </div>
+  </header>
+
+  <!-- 報名頁 -->
+  <div id="signup" class="view active">
+    <div class="sec-title"><span class="n">01</span> 選擇檢查場次</div>
+    <div id="dateGrid" class="grid"><div class="loading">場次載入中…</div></div>
+    <div id="itemsArea"></div>
+    <div id="formArea"></div>
+  </div>
+
+  <div id="lightbox" style="display:none;position:fixed;inset:0;background:rgba(22,36,31,.85);z-index:999;align-items:center;justify-content:center;cursor:zoom-out;">
+    <img id="lightboxImg" style="max-width:90vw;max-height:90vh;border-radius:8px;">
+  </div>
+
+  <!-- 管理後台 -->
+  <div id="admin" class="view">
+    <div id="pinGate" class="pin-gate">
+      <div class="panel">
+        <div style="font-weight:700;margin-bottom:12px;">管理後台登入</div>
+      <div style="position:relative;">
+        <input type="password" id="pinInput" placeholder="請輸入管理密碼" maxlength="10" style="padding-right:40px;">
+        <button type="button" id="pinToggle" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;padding:4px;">👁</button>
+      </div>
+        <button class="btn" id="pinSubmit" style="margin-top:12px;width:100%;">登入</button>
+        <div id="pinMsg"></div>
+      </div>
+    </div>
+
+    <div id="adminContent" style="display:none;">
+      <div class="admin-tabs">
+        <div class="admin-tab active" data-view="dashboard">總覽</div>
+        <div class="admin-tab" data-view="roster">名冊</div>
+        <div class="admin-tab" data-view="settings">場次設定</div>
+        <div class="admin-tab" data-view="unregistered">未報名提醒</div>
+        <div class="admin-tab" data-view="items">健檢項目設定</div>
+      </div>
+
+      <div id="dashboardView" class="admin-view">
+        <div id="statRow" class="stat-row"></div>
+        <div id="dashGrid" class="grid"></div>
+      </div>
+
+      <div id="rosterView" class="admin-view" style="display:none;">
+        <div class="toolbar">
+          <select id="deptFilter"><option value="">全部部門</option></select>
+          <button class="btn ghost small" id="refreshRoster">重新整理</button>
+          <button class="btn small" id="exportBtn">匯出 CSV</button>
+        </div>
+        <div id="rosterTableWrap"></div>
+      </div>
+
+      <div id="settingsView" class="admin-view" style="display:none;">
+        <div id="settingsList"></div>
+        <div class="add-row">
+          <div><label>新場次日期</label><input id="newDate" placeholder="例如：11/21（六）"></div>
+          <div><label>人數上限</label><input id="newCap" type="number" min="1" value="7"></div>
+          <button class="btn" id="addDateBtn">新增場次</button>
+        </div>
+      </div>
+
+      <div id="unregisteredView" class="admin-view" style="display:none;">
+        <div style="font-size:13px;color:var(--ink-soft);margin-bottom:8px;">
+          貼上全公司員工名單，每行格式為「姓名,部門」，按儲存即可比對出尚未報名的人。
+        </div>
+        <textarea id="empPaste" placeholder="王小明,工務部&#10;陳小華,行政部"></textarea>
+        <button class="btn" id="saveEmpBtn" style="margin-top:10px;">儲存名單並比對</button>
+        <div id="unregTableWrap" style="margin-top:16px;"></div>
+      </div>
+
+      <div id="itemsView" class="admin-view" style="display:none;">
+        <div class="panel">
+          <div style="font-weight:700;margin-bottom:8px;">上傳健檢項目照片</div>
+          <div class="hint" style="margin-bottom:10px;">可一次選取多張照片，不用填寫任何欄位，選好按上傳即可。</div>
+          <input type="file" id="itemImageFiles" accept="image/*" multiple>
+          <button class="btn" id="uploadItemsBtn" style="margin-top:12px;">上傳照片</button>
+          <div id="itemMsg"></div>
+        </div>
+        <div id="itemsListWrap" style="margin-top:18px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== 這裡改成你自己的 Apps Script 部署網址 =====
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyF1jlPOFB6bdXfj6wuFWo3YMjtSO_O40X1NDUfbS0fcx1grC37wRg4J-fGGAguPjTpdQ/exec";
+// ==================================================
+
+let adminPin = '';
+let healthItems = [];
+
+function loadItems() {
+  callApi({ action: 'getItems' }).then(res => {
+    healthItems = res.items || [];
+    renderItems();
+  });
+}
+function renderItems() {
+  const area = document.getElementById('itemsArea');
+  if (healthItems.length === 0) { area.innerHTML = ''; return; }
+  area.innerHTML = `
+    <div class="sec-title"><span class="n">02</span> 健檢項目參考</div>
+    <div class="item-grid">
+      ${healthItems.map(i => `
+        <div class="item-card">
+          <img src="${escapeHtml(i.imageUrl)}" alt="健檢項目" loading="lazy">
+          ${i.caption ? `<div class="item-body"><div class="item-name">${escapeHtml(i.caption)}</div></div>` : ''}
+        </div>`).join('')}
+    </div>`;
+  document.querySelectorAll('.item-card img').forEach(img => {
+    img.addEventListener('click', () => {
+      document.getElementById('lightboxImg').src = img.src;
+      document.getElementById('lightbox').style.display = 'flex';
+    });
+  });
+}
+document.getElementById('lightbox').addEventListener('click', () => {
+  document.getElementById('lightbox').style.display = 'none';
+});
+
+function callApi(payload) {
+  return fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  }).then(r => r.json());
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---------- 分頁切換 ----------
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.page).classList.add('active');
+  });
+});
+
+// ================= 同仁報名頁 =================
+let availability = [];
+let selectedDate = null;
+
+function loadAvailability() {
+  callApi({ action: 'availability' }).then(res => {
+    if (res.success) renderDates(res.dates);
+  });
+}
+function renderDates(data) {
+  availability = data;
+  const grid = document.getElementById('dateGrid');
+  if (data.length === 0) { grid.innerHTML = '<div class="loading">目前尚未開放任何場次，請洽人資窗口。</div>'; return; }
+  grid.innerHTML = data.map(d => {
+    const pct = Math.min(100, Math.round((d.count / d.capacity) * 100));
+    let cls = ''; if (pct >= 100) cls = 'full'; else if (pct >= 75) cls = 'warn';
+    return `
+      <div class="ticket ${selectedDate===d.date?'selected':''} ${d.full?'full':''}" data-date="${escapeHtml(d.date)}">
+        <div class="ticket-date">${escapeHtml(d.date)}</div>
+        <div class="bar"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+        <div class="count-row"><span><b>${d.count}</b> / ${d.capacity} 人</span><span class="pill ${d.full?'full':''}">${d.full?'已額滿':'可報名'}</span></div>
+      </div>`;
+  }).join('');
+  grid.querySelectorAll('.ticket').forEach(el => {
+    el.addEventListener('click', () => {
+      const date = el.getAttribute('data-date');
+      const d = availability.find(x => x.date === date);
+      if (d.full) return;
+      selectedDate = date;
+      renderDates(availability);
+      renderForm();
+    });
+  });
+}
+function renderForm() {
+  const area = document.getElementById('formArea');
+  const d = availability.find(x => x.date === selectedDate);
+  if (!d) { area.innerHTML = ''; return; }
+  area.innerHTML = `
+    <div class="sec-title"><span class="n">02</span> 填寫報名資料</div>
+    <div class="panel">
+      <div style="font-weight:700;margin-bottom:12px;color:var(--primary-dark);">已選擇：${escapeHtml(d.date)}（剩餘 ${d.remaining} 位）</div>
+      <div class="row2">
+        <div class="field"><label>姓名 *</label><input id="fName"></div>
+        <div class="field"><label>部門 *</label><input id="fDept"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>報名人數（含本人） *</label><input id="fHeadcount" type="number" min="1" max="6" value="1"></div>
+        <div class="field"><label>眷屬姓名</label><input id="fRelativeName" placeholder="多位用頓號分隔"></div>
+      </div>
+      <div class="field">
+        <label>健檢方案 *</label>
+        <select id="fPlan">
+          <option value="">請選擇方案</option>
+          <option value="A案">A案（6000元，含骨質密度檢查、甲狀腺超音波）</option>
+          <option value="B案">B案（6000元，不含骨質密度檢查、甲狀腺超音波）</option>
+        </select>
+      </div>
+      <div class="field"><label>電子郵件 *</label><input id="fEmail" type="email"><div class="hint">若名額剛好被搶走，系統會用這個信箱通知您。</div></div>
+      <div class="field"><label>備註（選填）</label><input id="fNote" placeholder="如需自費加購項目、或有特殊需求請填寫"></div>
+      <button class="btn" id="submitBtn">確認報名</button>
+      <div id="formMsg"></div>
+    </div>`;
+  const formTitle = area.querySelector('.sec-title .n');
+  if (formTitle) formTitle.textContent = healthItems.length > 0 ? '03' : '02';
+  document.getElementById('submitBtn').addEventListener('click', submitForm);
+}
+function submitForm() {
+  const name = document.getElementById('fName').value.trim();
+  const dept = document.getElementById('fDept').value.trim();
+  const headcount = document.getElementById('fHeadcount').value;
+  const relativeName = document.getElementById('fRelativeName').value.trim();
+  const plan = document.getElementById('fPlan').value;
+  const email = document.getElementById('fEmail').value.trim();
+  const msg = document.getElementById('formMsg');
+  const btn = document.getElementById('submitBtn');
+  if (!name || !dept) { msg.innerHTML = '<div class="msg err">請填寫姓名與部門。</div>'; return; }
+  if (!plan) { msg.innerHTML = '<div class="msg err">請選擇健檢方案（A案或B案）。</div>'; return; }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { msg.innerHTML = '<div class="msg err">請填寫正確格式的電子郵件。</div>'; return; }
+  btn.disabled = true; btn.textContent = '送出中…'; msg.innerHTML = '';
+  callApi({ action: 'submit', payload: { name, dept, relativeName, plan, email, headcount: parseInt(headcount,10)||1, date: selectedDate, itemChoicesText: document.getElementById('fNote').value.trim() } })
+    .then(res => {
+      if (res.success) {
+        msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message)}</div>`;
+        btn.textContent = '已報名';
+        loadAvailability();
+      } else {
+        msg.innerHTML = `<div class="msg err">${escapeHtml(res.message)}</div>`;
+        btn.disabled = false; btn.textContent = '確認報名';
+        if (res.full) loadAvailability();
+      }
+    })
+    .catch(() => {
+      msg.innerHTML = '<div class="msg err">送出失敗，請稍後再試一次。</div>';
+      btn.disabled = false; btn.textContent = '確認報名';
+    });
+}
+
+// ================= 管理後台 =================
+document.getElementById('pinToggle').addEventListener('click', () => {
+  const input = document.getElementById('pinInput');
+  input.type = input.type === 'password' ? 'text' : 'password';
+});
+document.getElementById('pinSubmit').addEventListener('click', () => {
+  const pin = document.getElementById('pinInput').value.trim();
+  const msg = document.getElementById('pinMsg');
+  callApi({ action: 'adminLogin', pin }).then(res => {
+    if (res.success) {
+      adminPin = pin;
+      document.getElementById('pinGate').style.display = 'none';
+      document.getElementById('adminContent').style.display = 'block';
+      loadDashboard();
+    } else {
+      msg.innerHTML = '<div class="msg err">密碼錯誤</div>';
+    }
+  });
+});
+
+document.querySelectorAll('.admin-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.admin-view').forEach(v => v.style.display = 'none');
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.view + 'View').style.display = 'block';
+    if (tab.dataset.view === 'roster') loadRoster();
+    if (tab.dataset.view === 'settings') loadSettings();
+    if (tab.dataset.view === 'unregistered') loadUnregistered();
+    if (tab.dataset.view === 'items') loadItemsAdmin();
+  });
+});
+
+function loadDashboard() {
+  callApi({ action: 'dashboard', pin: adminPin }).then(renderDashboard);
+}
+function renderDashboard(data) {
+  if (!data.success) return;
+  document.getElementById('statRow').innerHTML = `
+    <div class="stat"><div class="num">${data.totalRegistrations}</div><div class="lbl">總報名筆數</div></div>
+    <div class="stat"><div class="num">${data.totalCount} / ${data.totalCapacity}</div><div class="lbl">已用 / 總名額</div></div>
+    <div class="stat"><div class="num">${data.dates.filter(d=>d.full).length}</div><div class="lbl">已額滿場次</div></div>`;
+  const grid = document.getElementById('dashGrid');
+  if (data.dates.length === 0) { grid.innerHTML = '<div class="empty">尚未設定任何場次</div>'; return; }
+  grid.innerHTML = data.dates.map(d => {
+    const pct = Math.min(100, Math.round((d.count / d.capacity) * 100));
+    let cls = ''; if (pct >= 100) cls = 'full'; else if (pct >= 75) cls = 'warn';
+    return `<div class="ticket ${d.full?'full':''}" style="cursor:default;">
+      <div class="ticket-date">${escapeHtml(d.date)}</div>
+      <div class="bar"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+      <div class="count-row"><span>${d.count} / ${d.capacity} 人</span><span class="pill ${d.full?'full':''}">${d.full?'已額滿':'剩 '+d.remaining+' 位'}</span></div>
+    </div>`;
+  }).join('');
+}
+
+let currentDateOptions = [];
+function loadRoster() {
+  callApi({ action: 'departments', pin: adminPin }).then(res => {
+    const sel = document.getElementById('deptFilter');
+    sel.innerHTML = '<option value="">全部部門</option>' + (res.depts||[]).map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+  });
+  callApi({ action: 'dashboard', pin: adminPin }).then(res => { currentDateOptions = (res.dates||[]).map(d => d.date); });
+  const dept = document.getElementById('deptFilter').value;
+  callApi({ action: 'roster', pin: adminPin, dept }).then(res => renderRoster(res.rows || []));
+}
+function renderRoster(rows) {
+  const wrap = document.getElementById('rosterTableWrap');
+  if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的報名紀錄</div>'; return; }
+  wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>部門</th><th>眷屬姓名</th><th>人數</th><th>日期</th><th>方案</th><th>備註</th><th>更改日期</th></tr></thead>
+    <tbody>${rows.map((r,idx) => `<tr>
+      <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.dept)}</td><td>${escapeHtml(r.relativeName||'—')}</td><td>${r.headcount}</td><td>${escapeHtml(r.date)}</td>
+      <td>${escapeHtml(r.plan||'—')}</td>
+      <td style="max-width:200px;font-size:12px;">${escapeHtml(r.itemChoicesText||'—')}</td>
+      <td>
+        <select class="dateChangeSelect" data-idx="${idx}" style="padding:4px 6px;font-size:12px;">
+          ${currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('')}
+        </select>
+        <button class="btn ghost small changeDateBtn" data-idx="${idx}" style="margin-left:4px;">更改</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+
+  wrap.querySelectorAll('.changeDateBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = btn.dataset.idx;
+      const select = wrap.querySelector(`.dateChangeSelect[data-idx="${idx}"]`);
+      const newDate = select.value;
+      const r = rows[idx];
+      if (newDate === r.date) return;
+      if (!confirm(`確定要把 ${r.name} 的場次改成 ${newDate} 嗎？`)) return;
+      callApi({ action: 'changeDate', pin: adminPin, timestamp: r.timestamp, newDate }).then(res => {
+        if (res.success) { alert(res.message || '已更改'); loadRoster(); }
+        else { alert(res.message || '更改失敗'); }
+      });
+    });
+  });
+}
+document.getElementById('deptFilter').addEventListener('change', loadRoster);
+document.getElementById('refreshRoster').addEventListener('click', loadRoster);
+document.getElementById('exportBtn').addEventListener('click', () => {
+  callApi({ action: 'exportCsv', pin: adminPin }).then(res => {
+    const blob = new Blob(["\uFEFF" + res.csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = '健檢報名名冊.csv'; a.click();
+  });
+});
+
+function loadSettings() {
+  callApi({ action: 'dashboard', pin: adminPin }).then(data => {
+    const list = document.getElementById('settingsList');
+    if (!data.dates || data.dates.length === 0) { list.innerHTML = '<div class="empty">尚未設定任何場次</div>'; return; }
+    list.innerHTML = data.dates.map(d => `
+      <div class="settings-row">
+        <span class="grow"><b>${escapeHtml(d.date)}</b>　已報名 ${d.count} 人</span>
+        <input type="number" min="1" value="${d.capacity}" data-date="${escapeHtml(d.date)}" class="capInput" style="width:80px;">
+        <button class="btn ghost small saveCapBtn" data-date="${escapeHtml(d.date)}">更新上限</button>
+        <button class="btn danger small delDateBtn" data-date="${escapeHtml(d.date)}">刪除場次</button>
+      </div>`).join('');
+    document.querySelectorAll('.saveCapBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const date = btn.dataset.date;
+        const input = document.querySelector(`.capInput[data-date="${CSS.escape(date)}"]`);
+        callApi({ action: 'updateCapacity', pin: adminPin, date, capacity: Number(input.value) }).then(() => { loadSettings(); });
+      });
+    });
+    document.querySelectorAll('.delDateBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!confirm('確定要刪除「' + btn.dataset.date + '」這個場次嗎？')) return;
+        callApi({ action: 'removeDate', pin: adminPin, date: btn.dataset.date }).then(() => { loadSettings(); });
+      });
+    });
+  });
+}
+document.getElementById('addDateBtn').addEventListener('click', () => {
+  const date = document.getElementById('newDate').value.trim();
+  const cap = Number(document.getElementById('newCap').value);
+  if (!date || !cap) { alert('請輸入日期與人數上限'); return; }
+  callApi({ action: 'addDate', pin: adminPin, date, capacity: cap }).then(() => {
+    document.getElementById('newDate').value = '';
+    loadSettings();
+  });
+});
+
+function loadUnregistered() {
+  callApi({ action: 'employees', pin: adminPin }).then(res => {
+    document.getElementById('empPaste').value = (res.employees||[]).map(e => e.name + ',' + e.dept).join('\n');
+  });
+  refreshUnregisteredTable();
+}
+function refreshUnregisteredTable() {
+  callApi({ action: 'unregistered', pin: adminPin }).then(res => {
+    const wrap = document.getElementById('unregTableWrap');
+    const rows = res.unregistered || [];
+    if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有名單，或全部人都已報名</div>'; return; }
+    wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>部門</th></tr></thead><tbody>${rows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.dept)}</td></tr>`).join('')}</tbody></table>`;
+  });
+}
+document.getElementById('saveEmpBtn').addEventListener('click', () => {
+  callApi({ action: 'saveEmployees', pin: adminPin, text: document.getElementById('empPaste').value }).then(() => refreshUnregisteredTable());
+});
+
+// ---- 健檢項目照片 ----
+function loadItemsAdmin() {
+  callApi({ action: 'getItems' }).then(res => renderItemsAdmin(res.items || []));
+}
+function renderItemsAdmin(items) {
+  const wrap = document.getElementById('itemsListWrap');
+  if (items.length === 0) { wrap.innerHTML = '<div class="empty">尚未上傳任何照片</div>'; return; }
+  wrap.innerHTML = `<div class="item-grid">${items.map(i => `
+    <div class="item-card">
+      <img src="${escapeHtml(i.imageUrl)}" style="cursor:default;">
+      <div class="item-body">
+        <button class="btn danger small delItemBtn" data-id="${escapeHtml(i.id)}" style="width:100%;">刪除</button>
+      </div>
+    </div>`).join('')}</div>`;
+  wrap.querySelectorAll('.delItemBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('確定要刪除這張照片嗎？')) return;
+      callApi({ action: 'deleteItem', pin: adminPin, id: btn.dataset.id }).then(() => loadItemsAdmin());
+    });
+  });
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+document.getElementById('uploadItemsBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('itemImageFiles');
+  const msg = document.getElementById('itemMsg');
+  const btn = document.getElementById('uploadItemsBtn');
+  const files = Array.from(fileInput.files || []);
+  if (files.length === 0) { msg.innerHTML = '<div class="msg err">請先選擇照片</div>'; return; }
+
+  btn.disabled = true;
+  let done = 0;
+  msg.innerHTML = `<div class="msg ok">上傳中… (0/${files.length})</div>`;
+
+  for (const file of files) {
+    try {
+      const base64 = await fileToBase64(file);
+      const uploadRes = await callApi({ action: 'uploadItemImage', pin: adminPin, base64, filename: file.name, mimeType: file.type });
+      await callApi({ action: 'saveItem', pin: adminPin, item: { imageUrl: uploadRes.url } });
+      done++;
+      msg.innerHTML = `<div class="msg ok">上傳中… (${done}/${files.length})</div>`;
+    } catch (err) {
+      msg.innerHTML = `<div class="msg err">第 ${done+1} 張上傳失敗，其餘照片繼續上傳中</div>`;
+    }
+  }
+
+  msg.innerHTML = `<div class="msg ok">已完成，共上傳 ${done} 張照片</div>`;
+  btn.disabled = false;
+  fileInput.value = '';
+  loadItemsAdmin();
+});
+
+loadAvailability();
+loadItems();
+</script>
+</body>
+</html>
