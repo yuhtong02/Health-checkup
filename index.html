@@ -24,7 +24,7 @@
 
   .view{display:none;} .view.active{display:block;}
 
-  .sec-title{font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;font-size:18px;font-weight:700;margin:30px 0 14px;color:var(--ink);display:flex;align-items:baseline;gap:10px;}
+  .sec-title{font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;font-size:18px;font-weight:700;margin:30px 0 14px;color:var(--ink);display:flex;align-items:baseline;gap:10px;scroll-margin-top:16px;}
   .sec-title .n{font-size:12px;color:var(--primary);font-weight:700;letter-spacing:.08em;}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;}
   .ticket{position:relative;background:var(--surface);border-radius:var(--radius);padding:16px 16px 14px;border:1px solid var(--line);cursor:pointer;transition:.15s;}
@@ -96,6 +96,10 @@
   .add-row label{display:block;font-size:11.5px;color:var(--ink-soft);margin-bottom:4px;font-weight:700;}
   .empty{color:var(--ink-soft);font-size:13px;padding:22px 0;text-align:center;}
   .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}
+
+  .unreg-row{display:grid;grid-template-columns:50px 1fr 1fr 90px;gap:8px;padding:8px 4px;align-items:center;}
+  @media(max-width:520px){.unreg-row{grid-template-columns:32px 1fr 90px;}
+    .unreg-row .unreg-dept{grid-column:2 / span 2;font-size:12px;color:var(--ink-soft);}}
 </style>
 </head>
 <body>
@@ -232,7 +236,11 @@
         </div>
         <textarea id="empPaste" placeholder="王小明,工務部&#10;陳小華,行政部"></textarea>
         <button class="btn" id="saveEmpBtn" style="margin-top:10px;">儲存名單並比對</button>
-        <div id="unregTableWrap" style="margin-top:16px;"></div>
+        <div class="toolbar" style="margin-top:16px;">
+          <button class="btn ghost small" id="copyReminderBtn">一鍵複製未報名提醒</button>
+          <button class="btn small" id="downloadUnregCsvBtn">下載未報名名單 CSV</button>
+        </div>
+        <div id="unregTableWrap" style="margin-top:12px;"></div>
       </div>
 
       <div id="itemsView" class="admin-view" style="display:none;">
@@ -282,8 +290,11 @@
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyF1jlPOFB6bdXfj6wuFWo3YMjtSO_O40X1NDUfbS0fcx1grC37wRg4J-fGGAguPjTpdQ/exec";
 // ==================================================
 
-let adminPin = '';
+let adminToken = '';
 let healthItems = [];
+
+const ITEMS_CACHE_KEY = 'hc_items_cache_v1';
+const ITEMS_CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 小時的硬性上限，超過就當作過期整包重抓
 
 function renderItems() {
   const wrapper = document.getElementById('itemsArea');
@@ -317,7 +328,12 @@ function callApi(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload)
-  }).then(r => r.json());
+  }).then(r => r.json()).then(res => {
+    if (res && res.sessionExpired && adminToken) {
+      logoutAdmin('登入逾時，請重新登入');
+    }
+    return res;
+  });
 }
 
 function escapeHtml(s) {
@@ -365,13 +381,46 @@ function loadAvailability(opts) {
   });
 }
 
-// 健檢項目照片：背景非同步載入，完全不影響場次與報名表單顯示
+// 健檢項目照片：有本地快取就先立即顯示，背景只查輕量的 itemsVersion；
+// 版本相同就不再呼叫完整的 getItems，只有版本不同（或第一次進站、沒有快取）才會整包重抓。
 function loadItemsAsync() {
+  let cachedVersion = null;
+  let hasCache = false;
+  try {
+    const cached = JSON.parse(localStorage.getItem(ITEMS_CACHE_KEY) || 'null');
+    if (cached && (Date.now() - cached.ts) < ITEMS_CACHE_MAX_AGE) {
+      healthItems = cached.items || [];
+      cachedVersion = cached.version;
+      hasCache = true;
+      renderItems();
+    }
+  } catch (e) { /* 忽略壞掉的快取內容 */ }
+
+  if (!hasCache) {
+    // 第一次進站、或本地快取已經過期超過 24 小時：直接抓完整清單
+    fetchFullItems_();
+    return;
+  }
+
+  // 有快取：先問一個很輕量的版本號，版本沒變就完全不用重新抓圖片清單
+  callApi({ action: 'itemsVersion' }).then(res => {
+    const version = res && res.version;
+    if (version === cachedVersion) return; // 版本相同，省下一次 getItems
+    fetchFullItems_();
+  }).catch(() => { /* 版本查詢失敗就沿用目前畫面上的快取內容，不強制整包重抓 */ });
+}
+
+function fetchFullItems_() {
   callApi({ action: 'getItems' }).then(res => {
-    healthItems = (res && res.items) || [];
+    const items = (res && res.items) || [];
+    const version = res && res.version;
+    healthItems = items;
     renderItems();
+    try {
+      localStorage.setItem(ITEMS_CACHE_KEY, JSON.stringify({ ts: Date.now(), version, items }));
+    } catch (e) { /* 私密瀏覽模式等情況下 localStorage 可能無法寫入，忽略即可 */ }
   }).catch(() => {
-    document.getElementById('itemsArea').style.display = 'none';
+    if (healthItems.length === 0) document.getElementById('itemsArea').style.display = 'none';
   });
 }
 
@@ -384,7 +433,7 @@ function renderDates(data) {
     const pct = Math.min(100, Math.round((d.count / d.capacity) * 100));
     let cls = ''; if (pct >= 100) cls = 'full'; else if (pct >= 75) cls = 'warn';
     return `
-      <div class="ticket ${d.full?'full':''}" style="cursor:default;">
+      <div class="ticket ${d.full?'full':''}" data-date="${escapeHtml(d.date)}">
         <div class="ticket-date">${escapeHtml(d.date)}</div>
         <div class="bar"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
         <div class="count-row"><span><b>${d.count}</b> / ${d.capacity} 人</span><span class="pill ${d.full?'full':''}">${d.full?'已額滿':'可報名'}</span></div>
@@ -392,6 +441,21 @@ function renderDates(data) {
   }).join('');
   ensureFormInitialized();
   refreshAllPersonDateSelects();
+
+  // 點一個可報名的日期：設定為「本人」的預設檢查日期，並平滑捲動到 03 填寫報名資料（額滿的日期不可點）
+  grid.querySelectorAll('.ticket').forEach(el => {
+    el.addEventListener('click', () => {
+      const date = el.dataset.date;
+      const d2 = availability.find(x => x.date === date);
+      if (!d2 || d2.full) return;
+      if (mainPersonId !== null) {
+        const sel = document.getElementById(`p${mainPersonId}_date`);
+        if (sel) sel.value = date;
+      }
+      const formTitle = document.querySelector('#formArea .sec-title');
+      if (formTitle) formTitle.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
 }
 
 let employeeList = [];
@@ -704,6 +768,75 @@ document.getElementById('confirmSubmitBtn').addEventListener('click', () => {
 });
 
 // ================= 管理後台 =================
+const ADMIN_SESSION_KEY = 'hc_admin_session_v1';
+const ADMIN_IDLE_LIMIT = 30 * 60 * 1000; // 30 分鐘未操作自動登出
+const TOUCH_THROTTLE = 60 * 1000; // 最多每 60 秒才呼叫一次 touchSession，避免洗版
+
+function saveAdminSession() {
+  try { localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({ token: adminToken, lastActivity: Date.now() })); } catch (e) {}
+}
+let lastTouchAt = 0;
+function touchAdminSession() {
+  if (!adminToken) return;
+  const now = Date.now();
+  try {
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      s.lastActivity = now;
+      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(s));
+    }
+  } catch (e) {}
+  if (now - lastTouchAt < TOUCH_THROTTLE) return; // 節流：不用每次點擊都打 API
+  lastTouchAt = now;
+  callApi({ action: 'touchSession', token: adminToken }).catch(() => {});
+}
+function clearAdminSession() {
+  try { localStorage.removeItem(ADMIN_SESSION_KEY); } catch (e) {}
+}
+function tryRestoreAdminSession() {
+  try {
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    if (!s.token || (Date.now() - s.lastActivity) > ADMIN_IDLE_LIMIT) { clearAdminSession(); return false; }
+    adminToken = s.token;
+    document.getElementById('pinGate').style.display = 'none';
+    document.getElementById('adminContent').style.display = 'block';
+    loadDashboard(); // 若 token 其實已在後端過期，這次呼叫會回傳 sessionExpired，callApi 會自動處理登出
+    startAdminIdleWatch();
+    return true;
+  } catch (e) { return false; }
+}
+function logoutAdmin(reasonMsg) {
+  adminToken = '';
+  clearAdminSession();
+  document.getElementById('adminContent').style.display = 'none';
+  document.getElementById('pinGate').style.display = 'block';
+  document.getElementById('pinInput').value = '';
+  if (reasonMsg) document.getElementById('pinMsg').innerHTML = `<div class="msg err">${escapeHtml(reasonMsg)}</div>`;
+}
+
+// 有操作（點擊、觸控、按鍵）就更新最後活動時間並延長後端 session，重新起算 30 分鐘
+['click', 'touchstart', 'keydown'].forEach(evt => {
+  document.addEventListener(evt, () => { if (adminToken) touchAdminSession(); }, { passive: true });
+});
+
+let adminIdleTimer = null;
+function startAdminIdleWatch() {
+  if (adminIdleTimer) clearInterval(adminIdleTimer);
+  adminIdleTimer = setInterval(() => {
+    try {
+      const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+      if (!raw) { logoutAdmin(); return; }
+      const s = JSON.parse(raw);
+      if ((Date.now() - s.lastActivity) > ADMIN_IDLE_LIMIT) {
+        logoutAdmin('已閒置超過 30 分鐘，請重新登入');
+      }
+    } catch (e) {}
+  }, 30000);
+}
+
 document.getElementById('pinToggle').addEventListener('click', () => {
   const input = document.getElementById('pinInput');
   input.type = input.type === 'password' ? 'text' : 'password';
@@ -712,30 +845,25 @@ document.getElementById('pinSubmit').addEventListener('click', () => {
   const pin = document.getElementById('pinInput').value.trim();
   const msg = document.getElementById('pinMsg');
   callApi({ action: 'adminLogin', pin }).then(res => {
-    if (res.success) {
-      adminPin = pin;
+    if (res.success && res.token) {
+      adminToken = res.token;
       document.getElementById('pinGate').style.display = 'none';
       document.getElementById('adminContent').style.display = 'block';
+      saveAdminSession();
       loadDashboard();
-      startAdminPolling();
+      startAdminIdleWatch();
     } else {
       msg.innerHTML = '<div class="msg err">密碼錯誤</div>';
     }
   });
 });
 
+// 切到「管理後台」分頁時，若有未過期的登入狀態，直接還原，不用再輸入密碼
+document.querySelector('.tab-btn[data-page="admin"]').addEventListener('click', () => {
+  if (!adminToken) tryRestoreAdminSession();
+});
+
 let currentAdminView = 'dashboard';
-let adminPollTimer = null;
-function startAdminPolling() {
-  if (adminPollTimer) clearInterval(adminPollTimer);
-  adminPollTimer = setInterval(() => {
-    if (document.getElementById('editModal').style.display === 'flex') return; // 編輯視窗開啟時不打擾
-    const active = document.activeElement;
-    const isTyping = active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
-    if (isTyping) return; // 使用者正在輸入時不打擾，避免蓋掉還沒送出的內容
-    refreshCurrentAdminView();
-  }, 6000);
-}
 function refreshCurrentAdminView() {
   if (currentAdminView === 'dashboard') loadDashboard();
   else if (currentAdminView === 'roster') loadRoster();
@@ -745,6 +873,13 @@ function refreshCurrentAdminView() {
   else if (currentAdminView === 'selfpay') loadSelfPayAdmin();
   else if (currentAdminView === 'history') loadHistoryBatches();
 }
+
+// 分頁重新變成可見時（例如切回這個瀏覽器分頁）才重新整理一次，取代原本每 6 秒硬性輪詢
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && adminToken && document.getElementById('adminContent').style.display !== 'none') {
+    refreshCurrentAdminView();
+  }
+});
 
 document.querySelectorAll('.admin-tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -766,7 +901,7 @@ function loadDashboard() {
       renderDashboard(cached.data);
     }
   } catch (e) { /* 忽略壞掉的快取內容 */ }
-  callApi({ action: 'dashboard', pin: adminPin }).then(data => {
+  callApi({ action: 'dashboard', token: adminToken }).then(data => {
     renderDashboard(data);
     try { sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch (e) {}
   });
@@ -817,7 +952,7 @@ function loadRoster() {
   };
   const cached = getAdminCache(cacheKey, ADMIN_CACHE_TTL);
   if (cached) applyRoster(cached);
-  callApi({ action: 'rosterInit', pin: adminPin, dept }).then(res => {
+  callApi({ action: 'rosterInit', token: adminToken, dept }).then(res => {
     applyRoster(res);
     setAdminCache(cacheKey, res);
   });
@@ -854,7 +989,7 @@ function renderRoster(rows) {
       const r = rows[idx];
       if (newDate === r.date) return;
       if (!confirm(`確定要把 ${r.name} 的場次改成 ${newDate} 嗎？`)) return;
-      callApi({ action: 'changeDate', pin: adminPin, timestamp: r.timestamp, newDate }).then(res => {
+      callApi({ action: 'changeDate', token: adminToken, timestamp: r.timestamp, newDate }).then(res => {
         if (res.success) { alert(res.message || '已更改'); loadRoster(); }
         else { alert(res.message || '更改失敗'); }
       });
@@ -865,7 +1000,7 @@ function renderRoster(rows) {
       const idx = btn.dataset.idx;
       const r = rows[idx];
       if (!confirm(`確定要刪除 ${r.name} 的報名紀錄嗎？此動作無法復原。`)) return;
-      callApi({ action: 'deleteRegistration', pin: adminPin, timestamp: r.timestamp }).then(res => {
+      callApi({ action: 'deleteRegistration', token: adminToken, timestamp: r.timestamp }).then(res => {
         if (res.success) { loadRoster(); loadDashboard(); }
         else { alert(res.message || '刪除失敗'); }
       });
@@ -910,7 +1045,7 @@ document.getElementById('editSaveBtn').addEventListener('click', () => {
     selfPay: document.getElementById('editSelfPay').value.trim(),
     note: document.getElementById('editNote').value.trim()
   };
-  callApi({ action: 'editRegistration', pin: adminPin, timestamp: editingTimestamp, fields }).then(res => {
+  callApi({ action: 'editRegistration', token: adminToken, timestamp: editingTimestamp, fields }).then(res => {
     if (res.success) {
       document.getElementById('editModal').style.display = 'none';
       loadRoster(); loadDashboard();
@@ -922,7 +1057,7 @@ document.getElementById('editSaveBtn').addEventListener('click', () => {
 document.getElementById('deptFilter').addEventListener('change', loadRoster);
 document.getElementById('refreshRoster').addEventListener('click', loadRoster);
 document.getElementById('exportBtn').addEventListener('click', () => {
-  callApi({ action: 'exportCsv', pin: adminPin }).then(res => {
+  callApi({ action: 'exportCsv', token: adminToken }).then(res => {
     const blob = new Blob(["\uFEFF" + res.csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = '健檢報名名冊.csv'; a.click();
@@ -946,20 +1081,20 @@ function renderSettingsList(data) {
     btn.addEventListener('click', () => {
       const date = btn.dataset.date;
       const input = document.querySelector(`.capInput[data-date="${CSS.escape(date)}"]`);
-      callApi({ action: 'updateCapacity', pin: adminPin, date, capacity: Number(input.value) }).then(() => { loadSettings(); });
+      callApi({ action: 'updateCapacity', token: adminToken, date, capacity: Number(input.value) }).then(() => { loadSettings(); });
     });
   });
   document.querySelectorAll('.delDateBtn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!confirm('確定要刪除「' + btn.dataset.date + '」這個場次嗎？')) return;
-      callApi({ action: 'removeDate', pin: adminPin, date: btn.dataset.date }).then(() => { loadSettings(); });
+      callApi({ action: 'removeDate', token: adminToken, date: btn.dataset.date }).then(() => { loadSettings(); });
     });
   });
 }
 function loadSettings() {
   const cached = getAdminCache('settings', ADMIN_CACHE_TTL);
   if (cached) renderSettingsList(cached);
-  callApi({ action: 'dashboard', pin: adminPin }).then(data => {
+  callApi({ action: 'dashboard', token: adminToken }).then(data => {
     renderSettingsList(data);
     setAdminCache('settings', data);
   });
@@ -968,34 +1103,73 @@ document.getElementById('addDateBtn').addEventListener('click', () => {
   const date = document.getElementById('newDate').value.trim();
   const cap = Number(document.getElementById('newCap').value);
   if (!date || !cap) { alert('請輸入日期與人數上限'); return; }
-  callApi({ action: 'addDate', pin: adminPin, date, capacity: cap }).then(() => {
+  callApi({ action: 'addDate', token: adminToken, date, capacity: cap }).then(() => {
     document.getElementById('newDate').value = '';
     loadSettings();
   });
 });
 
+let lastUnregisteredRows = [];
 function loadUnregistered() {
   refreshUnregisteredTable();
 }
 function renderUnregistered(res) {
   document.getElementById('empPaste').value = (res.employees||[]).map(e => e.name + ',' + e.dept).join('\n');
+  lastUnregisteredRows = res.unregistered || [];
   const wrap = document.getElementById('unregTableWrap');
-  const rows = res.unregistered || [];
-  if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有名單，或全部人都已報名</div>'; return; }
-  wrap.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px;">${rows.map(r =>
-    `<span style="background:#FBF1DE;color:#92601A;border-radius:20px;padding:4px 12px;font-size:12.5px;font-weight:700;white-space:nowrap;">${escapeHtml(r.name)}（${escapeHtml(r.dept)}）</span>`
-  ).join('')}</div>`;
+  if (lastUnregisteredRows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有名單，或全部人都已報名</div>'; return; }
+  wrap.innerHTML = `
+    <div class="unreg-row" style="font-size:11px;color:var(--ink-soft);font-weight:700;text-transform:uppercase;">
+      <span>序號</span><span>姓名</span><span>部門</span><span>狀態</span>
+    </div>
+    ${lastUnregisteredRows.map((r, idx) => `
+      <div class="unreg-row" style="border-bottom:1px solid var(--line);">
+        <span style="color:var(--ink-soft);">${idx+1}</span>
+        <span style="font-weight:700;">${escapeHtml(r.name)}</span>
+        <span class="unreg-dept">${escapeHtml(r.dept)}</span>
+        <span class="pill full" style="justify-self:start;">未報名</span>
+      </div>`).join('')}`;
 }
 function refreshUnregisteredTable() {
   const cached = getAdminCache('unregistered', ADMIN_CACHE_TTL);
   if (cached) renderUnregistered(cached);
-  callApi({ action: 'unregistered', pin: adminPin }).then(res => {
+  callApi({ action: 'unregistered', token: adminToken }).then(res => {
     renderUnregistered(res);
     setAdminCache('unregistered', res);
   });
 }
 document.getElementById('saveEmpBtn').addEventListener('click', () => {
-  callApi({ action: 'saveEmployees', pin: adminPin, text: document.getElementById('empPaste').value }).then(() => refreshUnregisteredTable());
+  callApi({ action: 'saveEmployees', token: adminToken, text: document.getElementById('empPaste').value }).then(() => refreshUnregisteredTable());
+});
+
+document.getElementById('copyReminderBtn').addEventListener('click', async () => {
+  if (lastUnregisteredRows.length === 0) { alert('目前沒有尚未報名的人員'); return; }
+  const byDept = {};
+  lastUnregisteredRows.forEach(r => {
+    const dept = r.dept || '未分類';
+    if (!byDept[dept]) byDept[dept] = [];
+    byDept[dept].push(r.name);
+  });
+  const lines = Object.keys(byDept).map(dept => `${dept}：${byDept[dept].join('、')}`);
+  const text = `【健康檢查報名提醒】\n以下同仁目前尚未完成年度健康檢查報名：\n\n${lines.join('\n')}\n\n請尚未完成報名的同仁於期限前至健康檢查報名系統完成登記，謝謝。`;
+  try {
+    await navigator.clipboard.writeText(text);
+    alert('已複製提醒文字，可直接貼到 LINE 或 Email');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    alert('已複製提醒文字，可直接貼到 LINE 或 Email');
+  }
+});
+document.getElementById('downloadUnregCsvBtn').addEventListener('click', () => {
+  if (lastUnregisteredRows.length === 0) { alert('目前沒有尚未報名的人員'); return; }
+  const header = ['序號', '姓名', '部門'];
+  const rows = [header, ...lastUnregisteredRows.map((r, idx) => [idx+1, r.name, r.dept])];
+  const csv = rows.map(row => row.map(cell => '"' + String(cell).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = '未報名名單.csv'; a.click();
 });
 
 // ---- 健檢項目照片 ----
@@ -1011,17 +1185,54 @@ function loadItemsAdmin() {
 function renderItemsAdmin(items) {
   const wrap = document.getElementById('itemsListWrap');
   if (items.length === 0) { wrap.innerHTML = '<div class="empty">尚未上傳任何照片</div>'; return; }
-  wrap.innerHTML = `<div class="item-grid">${items.map(i => `
+  wrap.innerHTML = `<div class="item-grid">${items.map((i, idx) => `
     <div class="item-card">
       <img src="${escapeHtml(i.imageUrl)}" style="cursor:default;">
       <div class="item-body">
+        <div style="display:flex;gap:4px;margin-bottom:6px;">
+          <button class="btn ghost small moveItemBtn" data-id="${escapeHtml(i.id)}" data-dir="up" ${idx===0?'disabled':''} style="flex:1;">↑ 上移</button>
+          <button class="btn ghost small moveItemBtn" data-id="${escapeHtml(i.id)}" data-dir="down" ${idx===items.length-1?'disabled':''} style="flex:1;">↓ 下移</button>
+        </div>
+        <label class="btn ghost small" style="display:block;text-align:center;cursor:pointer;margin-bottom:6px;">
+          更換圖片
+          <input type="file" accept="image/*" class="replaceItemInput" data-id="${escapeHtml(i.id)}" style="display:none;">
+        </label>
         <button class="btn danger small delItemBtn" data-id="${escapeHtml(i.id)}" style="width:100%;">刪除</button>
       </div>
     </div>`).join('')}</div>`;
+
   wrap.querySelectorAll('.delItemBtn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!confirm('確定要刪除這張照片嗎？')) return;
-      callApi({ action: 'deleteItem', pin: adminPin, id: btn.dataset.id }).then(() => loadItemsAdmin());
+      callApi({ action: 'deleteItem', token: adminToken, id: btn.dataset.id }).then(() => { loadItemsAdmin(); loadItemsAsync(); });
+    });
+  });
+
+  wrap.querySelectorAll('.moveItemBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ids = items.map(i => i.id);
+      const idx = ids.indexOf(btn.dataset.id);
+      const swapWith = btn.dataset.dir === 'up' ? idx - 1 : idx + 1;
+      if (swapWith < 0 || swapWith >= ids.length) return;
+      [ids[idx], ids[swapWith]] = [ids[swapWith], ids[idx]];
+      btn.disabled = true;
+      callApi({ action: 'reorderItems', token: adminToken, ids }).then(() => { loadItemsAdmin(); loadItemsAsync(); });
+    });
+  });
+
+  wrap.querySelectorAll('.replaceItemInput').forEach(input => {
+    input.addEventListener('change', async () => {
+      const file = input.files[0];
+      if (!file) return;
+      const id = input.dataset.id;
+      try {
+        const base64 = await fileToBase64(file);
+        const uploadRes = await callApi({ action: 'uploadItemImage', token: adminToken, base64, filename: file.name, mimeType: file.type });
+        await callApi({ action: 'replaceItemImage', token: adminToken, id, imageUrl: uploadRes.url });
+        loadItemsAdmin(); loadItemsAsync();
+      } catch (e) {
+        alert('更換圖片失敗，請再試一次');
+      }
     });
   });
 }
@@ -1037,8 +1248,8 @@ function fileToBase64(file) {
 
 async function uploadOneItem(file) {
   const base64 = await fileToBase64(file);
-  const uploadRes = await callApi({ action: 'uploadItemImage', pin: adminPin, base64, filename: file.name, mimeType: file.type });
-  await callApi({ action: 'saveItem', pin: adminPin, item: { imageUrl: uploadRes.url } });
+  const uploadRes = await callApi({ action: 'uploadItemImage', token: adminToken, base64, filename: file.name, mimeType: file.type });
+  await callApi({ action: 'saveItem', token: adminToken, item: { imageUrl: uploadRes.url } });
 }
 
 document.getElementById('uploadItemsBtn').addEventListener('click', async () => {
@@ -1098,7 +1309,7 @@ function renderSelfPayAdmin(items) {
   wrap.querySelectorAll('.delSelfPayBtn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!confirm('確定要刪除這個自費項目嗎？')) return;
-      callApi({ action: 'deleteSelfPayItem', pin: adminPin, id: btn.dataset.id }).then(() => loadSelfPayAdmin());
+      callApi({ action: 'deleteSelfPayItem', token: adminToken, id: btn.dataset.id }).then(() => loadSelfPayAdmin());
     });
   });
 }
@@ -1107,7 +1318,7 @@ document.getElementById('addSelfPayBtn').addEventListener('click', () => {
   const price = document.getElementById('selfPayPrice').value;
   const msg = document.getElementById('selfPayMsg');
   if (!name) { msg.innerHTML = '<div class="msg err">請輸入項目名稱</div>'; return; }
-  callApi({ action: 'saveSelfPayItem', pin: adminPin, item: { name, price } }).then(res => {
+  callApi({ action: 'saveSelfPayItem', token: adminToken, item: { name, price } }).then(res => {
     msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message||'已新增')}</div>`;
     document.getElementById('selfPayName').value = '';
     document.getElementById('selfPayPrice').value = '';
@@ -1121,7 +1332,7 @@ document.getElementById('archiveBtn').addEventListener('click', () => {
   const msg = document.getElementById('archiveMsg');
   if (!batchName) { msg.innerHTML = '<div class="msg err">請輸入梯次名稱</div>'; return; }
   if (!confirm(`確定要把目前的名冊封存為「${batchName}」嗎？\n封存後目前的報名資料會被清空，改為可在「歷史紀錄」查閱，此動作無法復原。`)) return;
-  callApi({ action: 'archiveRoster', pin: adminPin, batchName }).then(res => {
+  callApi({ action: 'archiveRoster', token: adminToken, batchName }).then(res => {
     if (res.success) {
       msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message)}</div>`;
       document.getElementById('archiveBatchName').value = '';
@@ -1134,7 +1345,7 @@ document.getElementById('archiveBtn').addEventListener('click', () => {
 });
 
 function loadHistoryBatches() {
-  callApi({ action: 'historyBatches', pin: adminPin }).then(res => renderHistoryBatches(res.batches || []));
+  callApi({ action: 'historyBatches', token: adminToken }).then(res => renderHistoryBatches(res.batches || []));
 }
 function renderHistoryBatches(batches) {
   const wrap = document.getElementById('historyBatchList');
@@ -1144,13 +1355,23 @@ function renderHistoryBatches(batches) {
       <span class="grow"><b>${escapeHtml(b.batch)}</b>　共 ${b.count} 筆</span>
       <button class="btn ghost small viewHistoryBtn" data-batch="${escapeHtml(b.batch)}">查看</button>
       <button class="btn small exportHistoryBtn" data-batch="${escapeHtml(b.batch)}">匯出 CSV</button>
+      <button class="btn danger small deleteBatchBtn" data-batch="${escapeHtml(b.batch)}">刪除</button>
     </div>`).join('');
+  wrap.querySelectorAll('.deleteBatchBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm(`確定要刪除此筆歷史紀錄嗎？刪除後無法復原。\n（將刪除「${btn.dataset.batch}」整個梯次，共同的資料都會一併移除）`)) return;
+      callApi({ action: 'deleteHistoryBatch', token: adminToken, batch: btn.dataset.batch }).then(res => {
+        if (res.success) { loadHistoryBatches(); document.getElementById('historyRosterWrap').innerHTML = ''; }
+        else alert(res.message || '刪除失敗');
+      });
+    });
+  });
   wrap.querySelectorAll('.viewHistoryBtn').forEach(btn => {
     btn.addEventListener('click', () => loadHistoryRoster(btn.dataset.batch));
   });
   wrap.querySelectorAll('.exportHistoryBtn').forEach(btn => {
     btn.addEventListener('click', () => {
-      callApi({ action: 'exportHistoryCsv', pin: adminPin, batch: btn.dataset.batch }).then(res => {
+      callApi({ action: 'exportHistoryCsv', token: adminToken, batch: btn.dataset.batch }).then(res => {
         const blob = new Blob(["\uFEFF" + res.csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = btn.dataset.batch + '.csv'; a.click();
@@ -1159,13 +1380,28 @@ function renderHistoryBatches(batches) {
   });
 }
 function loadHistoryRoster(batch) {
-  callApi({ action: 'historyRoster', pin: adminPin, batch }).then(res => {
+  callApi({ action: 'historyRoster', token: adminToken, batch }).then(res => {
     const wrap = document.getElementById('historyRosterWrap');
     const rows = res.rows || [];
     if (rows.length === 0) { wrap.innerHTML = '<div class="empty">此梯次沒有資料</div>'; return; }
     wrap.innerHTML = `<div style="font-weight:700;margin-bottom:8px;">「${escapeHtml(batch)}」名冊</div>
-      <table><thead><tr><th>姓名</th><th>身份</th><th>部門</th><th>日期</th><th>方案</th><th>自費項目</th></tr></thead>
-      <tbody>${rows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity)}</td><td>${escapeHtml(r.dept)}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.plan||'—')}</td><td style="max-width:160px;font-size:12px;">${escapeHtml(r.selfPay||'—')}</td></tr>`).join('')}</tbody></table>`;
+      <table><thead><tr><th>姓名</th><th>身份</th><th>部門</th><th>日期</th><th>方案</th><th>自費項目</th><th>操作</th></tr></thead>
+      <tbody>${rows.map((r,idx) => `<tr>
+        <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity)}</td><td>${escapeHtml(r.dept)}</td>
+        <td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.plan||'—')}</td>
+        <td style="max-width:160px;font-size:12px;">${escapeHtml(r.selfPay||'—')}</td>
+        <td><button class="btn danger small deleteHistoryEntryBtn" data-idx="${idx}">刪除</button></td>
+      </tr>`).join('')}</tbody></table>`;
+    wrap.querySelectorAll('.deleteHistoryEntryBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const r = rows[btn.dataset.idx];
+        if (!confirm('確定要刪除此筆歷史紀錄嗎？刪除後無法復原。')) return;
+        callApi({ action: 'deleteHistoryEntry', token: adminToken, batch: r.batch, timestamp: r.timestamp }).then(res2 => {
+          if (res2.success) { loadHistoryRoster(batch); loadHistoryBatches(); }
+          else alert(res2.message || '刪除失敗');
+        });
+      });
+    });
   });
 }
 
