@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>健康檢查場次報名</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- SheetJS 只有管理後台的「匯出 Excel」與「輸出健檢時程表」會用到（約 900KB）。
+     原本放在這裡是 render-blocking script，讓每一位只是要報名的同仁都得先等它下載完，
+     首頁文字與操作介面才會出現。改成需要時才由 ensureXlsxLoaded() 動態載入。 -->
 <style>
   :root{
     --bg:#F5F7F3; --surface:#FFFFFF; --ink:#16241F; --ink-soft:#5B6E64;
@@ -133,9 +135,13 @@
         <div class="hint" style="margin-bottom:10px;">如果您已經完成報名，之後家屬臨時也想一起參加，可以在這裡查詢您原本的報名、追加眷屬，不需要重新報名一次。</div>
         <div class="row2">
           <div class="field"><label>本人姓名</label><input id="appendSearchName" autocomplete="off"></div>
-          <div class="field"><label>本人身分證字號</label><input id="appendSearchIdNum" placeholder="A123456789"></div>
+          <div class="field">
+            <label>本人生日</label>
+            <input type="date" id="appendSearchBirthDate">
+            <div class="hint">請選擇完整的出生年月日（西元年）。</div>
+          </div>
         </div>
-        <button class="btn ghost" id="appendSearchBtn">查詢我的報名</button>
+        <button class="btn ghost" id="appendSearchBtn">查詢本人報名資料</button>
         <div id="appendSearchMsg"></div>
       </div>
       <div id="appendFoundArea" style="display:none;">
@@ -184,6 +190,7 @@
         <div class="admin-tab active" data-view="dashboard">總覽</div>
         <div class="admin-tab" data-view="roster">名冊</div>
         <div class="admin-tab" data-view="settings">場次設定</div>
+        <div class="admin-tab" data-view="employees">員工管理</div>
         <div class="admin-tab" data-view="unregistered">未報名提醒</div>
         <div class="admin-tab" data-view="items">健檢項目設定</div>
         <div class="admin-tab" data-view="selfpay">自費項目設定</div>
@@ -200,7 +207,9 @@
           <select id="deptFilter"><option value="">全部部門</option></select>
           <button class="btn ghost small" id="refreshRoster">重新整理</button>
           <button class="btn small" id="exportBtn">匯出 Excel</button>
+          <button class="btn small" id="exportScheduleBtn">輸出健檢時程表</button>
         </div>
+        <div class="hint" style="margin-bottom:10px;">「匯出 Excel」是一般平鋪名冊；「輸出健檢時程表」會依健檢機構的時程表版型產生，含健檢時程表與自費金額兩張工作表。</div>
         <div id="rosterTableWrap"></div>
       </div>
 
@@ -231,8 +240,21 @@
               </select>
             </div>
           </div>
-          <div class="field"><label>日期</label><select id="editDate"></select></div>
-          <div class="field"><label>方案</label><input id="editPlan"></div>
+          <div class="field">
+            <label>日期</label>
+            <select id="editDate"></select>
+            <input type="date" id="editOtherDate" style="display:none;margin-top:6px;">
+            <div class="hint">選「其他日期」時必須指定實際日期，狀態會由系統固定為「待人工確認」，且不占正式場次名額。</div>
+          </div>
+          <div class="field">
+            <label>健檢方案 *</label>
+            <select id="editPlan">
+              <option value="">請選擇方案</option>
+              <option value="A案">A案</option>
+              <option value="B案">B案</option>
+            </select>
+            <div id="editPlanWarn" style="display:none;font-size:12px;color:var(--danger);font-weight:700;margin-top:5px;"></div>
+          </div>
           <div class="field"><label>自費項目</label><input id="editSelfPay"></div>
           <div class="field"><label>備註</label><input id="editNote"></div>
           <div style="display:flex;gap:10px;margin-top:14px;">
@@ -252,12 +274,32 @@
         </div>
       </div>
 
+      <div id="employeesView" class="admin-view" style="display:none;">
+        <div class="panel">
+          <div style="font-weight:700;margin-bottom:12px;">新增員工</div>
+          <div class="row2">
+            <div class="field"><label>姓名 *</label><input id="newEmpName" autocomplete="off"></div>
+            <div class="field"><label>部門 *</label><input id="newEmpDept" autocomplete="off"></div>
+          </div>
+          <div class="field"><label>歸類 *</label><select id="newEmpCategory"></select></div>
+          <button class="btn" id="addEmpBtn">新增員工</button>
+          <div id="addEmpMsg"></div>
+        </div>
+        <div class="toolbar" style="margin-top:18px;">
+          <select id="empCategoryFilter"><option value="">全部歸類</option></select>
+          <button class="btn ghost small" id="refreshEmpBtn">重新整理</button>
+        </div>
+        <div id="empListWrap" style="overflow-x:auto;"></div>
+      </div>
+
       <div id="unregisteredView" class="admin-view" style="display:none;">
         <div style="font-size:13px;color:var(--ink-soft);margin-bottom:8px;">
-          貼上全公司員工名單，每行格式為「姓名,部門」，按儲存即可比對出尚未報名的人。
+          貼上全公司員工名單，每行格式為「姓名,部門」或「姓名,部門,歸類」，按儲存即可比對出尚未報名的人（以姓名＋部門比對）。<br>
+          第三欄『歸類』：既有員工可省略，系統會保留原本設定；新進員工請務必填寫有效歸類。若姓名重複或無法判定原歸類，系統會要求人工補填，不會自動預設。
         </div>
-        <textarea id="empPaste" placeholder="王小明,工務部&#10;陳小華,行政部"></textarea>
+        <textarea id="empPaste" placeholder="王小明,工務部&#10;陳小華,行政部,鈺通營造工程股份有限公司"></textarea>
         <button class="btn" id="saveEmpBtn" style="margin-top:10px;">儲存名單並比對</button>
+        <div id="saveEmpMsg"></div>
         <div class="toolbar" style="margin-top:16px;">
           <select id="unregDeptFilter"><option value="">全部部門</option></select>
           <button class="btn ghost small" id="copyReminderBtn">一鍵複製未報名提醒</button>
@@ -316,8 +358,63 @@ const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyF1jlPOFB6bdXf
 let adminToken = '';
 let healthItems = [];
 
+// 「其他日期」不是正式場次：不占名額、不影響任何場次剩餘人數。
+// 選到它時必須另外指定實際日期；狀態（待人工確認）一律由後端寫入，前端不送、也不決定。
+const OTHER_DATE_LABEL = '其他日期';
+
+// 綁定「日期下拉選單」與「其他日期 picker」的連動：選其他日期才顯示 picker
+function bindOtherDateToggle(selectId, inputId) {
+  const sel = document.getElementById(selectId);
+  const input = document.getElementById(inputId);
+  if (!sel || !input) return;
+  const sync = () => {
+    const isOther = sel.value === OTHER_DATE_LABEL;
+    input.style.display = isOther ? 'block' : 'none';
+    if (!isOther) input.value = ''; // 改回正式場次時清空，後端也會把 N/O 清空
+  };
+  // 用旗標避免同一個重複使用的元素（例如編輯視窗）被重複綁定
+  if (!sel.dataset.otherDateBound) {
+    sel.addEventListener('change', sync);
+    sel.dataset.otherDateBound = '1';
+  }
+  sync();
+}
+
+// 讀取一組「日期選擇 + 其他日期」的值，回傳 { ok, date, otherDate, message }
+function readDateSelection(selectId, inputId, who) {
+  const sel = document.getElementById(selectId);
+  const input = document.getElementById(inputId);
+  const date = sel ? sel.value : '';
+  if (!date) return { ok: false, message: `請選擇${who}的檢查日期。` };
+  if (date === OTHER_DATE_LABEL) {
+    const other = input ? input.value : '';
+    if (!other) return { ok: false, message: `${who}選擇了「其他日期」，請指定實際日期。` };
+    return { ok: true, date: OTHER_DATE_LABEL, otherDate: other };
+  }
+  return { ok: true, date, otherDate: '' };
+}
+
+// 名冊／確認視窗顯示用：把日期與其他日期合併成一段可讀文字
+function formatDateForDisplay(r) {
+  if (String(r.date || '') !== OTHER_DATE_LABEL) return r.date || '';
+  const status = r.otherDateStatus ? `（${r.otherDateStatus}）` : '';
+  return `其他日期：${r.otherDate || '—'}${status}`;
+}
+
 const ITEMS_CACHE_KEY = 'hc_items_cache_v1';
 const ITEMS_CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 小時的硬性上限，超過就當作過期整包重抓
+
+// 縮圖網址：卡片實際只顯示約 220×180px，但後端存的是 Drive 的 sz=w2000 大圖。
+// 這裡「只在顯示時」把寬度參數改小，不動試算表裡儲存的網址、不換圖、不動圖片管理功能。
+// 點擊放大仍然使用原本的 w2000 原圖（見下方 data-full）。
+// 非 Drive thumbnail 格式的網址（例如管理者手動貼的外部連結）一律原樣不動。
+const GRID_THUMB_WIDTH = 640; // 2 倍於實際顯示寬度，高解析螢幕也不會糊
+function gridThumbUrl(url) {
+  const s = String(url == null ? '' : url);
+  if (!/^https:\/\/drive\.google\.com\/thumbnail\?/.test(s)) return s;
+  if (!/[?&]sz=w\d+/.test(s)) return s;
+  return s.replace(/([?&]sz=)w\d+/, '$1w' + GRID_THUMB_WIDTH);
+}
 
 function renderItems() {
   const wrapper = document.getElementById('itemsArea');
@@ -327,16 +424,25 @@ function renderItems() {
   content.className = '';
   content.innerHTML = `
     <div class="item-grid">
-      ${healthItems.map(i => `
+      ${healthItems.map((i, idx) => {
+        // 前兩張在首屏，必須立刻載入（lazy 會讓它們延後出現）；第三張之後才 lazy。
+        const eager = idx < 2;
+        return `
         <div class="item-card">
-          <img src="${escapeHtml(i.imageUrl)}" alt="健檢項目" loading="lazy">
+          <img src="${escapeHtml(gridThumbUrl(i.imageUrl))}"
+               data-full="${escapeHtml(i.imageUrl)}"
+               alt="健檢項目"
+               decoding="async"
+               ${eager ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"'}>
           ${i.caption ? `<div class="item-body"><div class="item-name">${escapeHtml(i.caption)}</div></div>` : ''}
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>`;
   document.querySelectorAll('.item-card img').forEach(img => {
     img.addEventListener('click', () => {
       const lightbox = document.getElementById('lightbox');
-      document.getElementById('lightboxImg').src = img.src;
+      // 放大一律使用原始大圖，不是格子裡的縮圖
+      document.getElementById('lightboxImg').src = img.dataset.full || img.src;
       lightbox.style.display = 'flex';
       lightbox.scrollTop = 0;
     });
@@ -359,8 +465,98 @@ function callApi(payload) {
   });
 }
 
+// ========== 只給「唯讀查詢」使用的有限次重試 ==========
+// 用途：Apps Script 冷啟動或瞬間網路不穩時，不要讓使用者直接看到永久性的「載入失敗」。
+//
+// ⚠️ 安全界線（非常重要）：
+// 1. 這個函式「只」能用在唯讀查詢（availability / getItems / itemsVersion /
+//    employeesPublic / selfPayItems / rosterInit / employees / historyBatches）。
+//    任何會寫入資料的操作（submit、appendDependents、editRegistration、changeDate、
+//    delete*、save*、upload*、archiveRoster、adminLogin…）一律繼續使用 callApi，
+//    絕對不可自動重送——重送報名會造成重複資料，重送登入會產生多個 session token。
+// 2. 只有「連線層失敗」（fetch reject：斷線、逾時、CORS）才重試。
+//    後端有正常回應（即使是 success:false）一律當成最終答案直接回傳，不重試——
+//    那是業務上的明確結果，不是連線問題。
+// 3. 重試次數有上限（預設額外 2 次，合計最多 3 次請求），採遞增延遲，
+//    沒有無限重試、沒有背景輪詢、沒有任何定時 polling。
+const READ_RETRY_MAX = 2;          // 失敗後最多再試 2 次
+const READ_RETRY_DELAYS = [700, 1800]; // 第 1、2 次重試前的等待毫秒數
+
+function callApiRead(payload, attempt) {
+  const n = attempt || 0;
+  return callApi(payload).catch(err => {
+    if (n >= READ_RETRY_MAX) throw err;   // 達到上限就把錯誤往外拋，由呼叫端顯示重試 UI
+    return new Promise(resolve => setTimeout(resolve, READ_RETRY_DELAYS[n]))
+      .then(() => callApiRead(payload, n + 1));
+  });
+}
+
+// ========== SheetJS 按需載入 ==========
+// 回傳 Promise：已載入就直接 resolve；載入中共用同一個 Promise，不會重複插入 script。
+// 載入失敗時把快取清掉，讓使用者下次按匯出還能重試。
+let xlsxLoadPromise = null;
+function ensureXlsxLoaded() {
+  if (typeof XLSX !== 'undefined') return Promise.resolve();
+  if (xlsxLoadPromise) return xlsxLoadPromise;
+  xlsxLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = () => (typeof XLSX !== 'undefined')
+      ? resolve()
+      : reject(new Error('Excel 函式庫載入異常，請重新整理頁面後再試一次'));
+    s.onerror = () => reject(new Error('Excel 函式庫載入失敗，請確認網路連線後再試一次'));
+    document.head.appendChild(s);
+  }).catch(err => { xlsxLoadPromise = null; throw err; });
+  return xlsxLoadPromise;
+}
+
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ========== 管理後台統一的「會寫資料」操作 UX ==========
+// 原則：送出後按鈕 disabled 並顯示進行中文字；一律等後端明確回報成功之後，
+// 才更新畫面與 cache（絕不 optimistic update）；失敗時顯示後端實際錯誤並恢復按鈕。
+function setBtnBusy(btn, busyText) {
+  if (!btn) return null;
+  const original = { disabled: btn.disabled, text: btn.textContent };
+  btn.disabled = true;
+  btn.textContent = busyText;
+  return original;
+}
+function restoreBtn(btn, original) {
+  if (!btn || !original) return;
+  btn.disabled = original.disabled;
+  btn.textContent = original.text;
+}
+function showMsg(el, ok, text) {
+  if (!el) { if (!ok) alert(text); return; }
+  el.innerHTML = `<div class="msg ${ok ? 'ok' : 'err'}">${escapeHtml(text)}</div>`;
+}
+
+// opts: { button, msgEl, busyText, doneText, payload, confirmText, onSuccess }
+// onSuccess 只有在後端明確 success 時才會被呼叫，用來更新前端 cache 與畫面。
+function runMutation(opts) {
+  if (opts.confirmText && !confirm(opts.confirmText)) return Promise.resolve(null);
+  const btn = opts.button || null;
+  const msgEl = opts.msgEl || null;
+  const original = setBtnBusy(btn, opts.busyText || '處理中…');
+  if (msgEl) msgEl.innerHTML = '';
+  return callApi(opts.payload).then(res => {
+    if (res && res.success) {
+      if (opts.onSuccess) opts.onSuccess(res);   // 先讓資料一致，再顯示成功
+      restoreBtn(btn, original);
+      showMsg(msgEl, true, opts.doneText || '✓ 已儲存完畢');
+      return res;
+    }
+    restoreBtn(btn, original);
+    showMsg(msgEl, false, (res && res.message) ? res.message : '操作失敗，請稍後再試一次');
+    return res;
+  }).catch(() => {
+    restoreBtn(btn, original);
+    showMsg(msgEl, false, '連線失敗，資料未變更，請稍後再試一次');
+    return null;
+  });
 }
 
 // ---------- 分頁切換 ----------
@@ -391,17 +587,38 @@ function loadAvailability(opts) {
       }
     } catch (e) { /* 忽略壞掉的快取內容 */ }
   }
-  return callApi({ action: 'availability' }).then(res => {
+  // 唯讀查詢，連線失敗時最多自動重試 2 次（Apps Script 冷啟動常見）
+  return callApiRead({ action: 'availability' }).then(res => {
     if (res.success) {
       renderDates(res.dates);
       try {
         localStorage.setItem(AVAILABILITY_CACHE_KEY, JSON.stringify({ ts: Date.now(), dates: res.dates }));
       } catch (e) { /* 私密瀏覽模式等情況下 localStorage 可能無法寫入，忽略即可 */ }
+    } else if (document.getElementById('dateGrid').querySelector('.loading')) {
+      showAvailabilityLoadError(res && res.message);
     }
   }).catch(() => {
+    // 重試後仍然失敗：給使用者一個明確的「再試一次」按鈕，不要只留下死訊息
     const grid = document.getElementById('dateGrid');
-    if (grid.querySelector('.loading')) grid.innerHTML = '<div class="loading">載入失敗，請重新整理頁面再試一次。</div>';
+    if (grid.querySelector('.loading') || grid.children.length === 0) showAvailabilityLoadError();
   });
+}
+
+// 場次載入失敗時的重試 UI。只在「畫面上還沒有任何可用場次」時才顯示，
+// 已經有（快取或前一次成功的）場次時不覆蓋畫面。
+function showAvailabilityLoadError(backendMessage) {
+  const grid = document.getElementById('dateGrid');
+  grid.innerHTML =
+    `<div class="loading">場次載入失敗${backendMessage ? '：' + escapeHtml(backendMessage) : '，可能是網路不穩或系統剛啟動'}。
+       <button class="btn ghost small" id="retryAvailabilityBtn" style="margin-left:8px;">再試一次</button>
+     </div>`;
+  const btn = document.getElementById('retryAvailabilityBtn');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      grid.innerHTML = '<div class="loading">場次載入中…</div>';
+      loadAvailability({ forceRefresh: true });
+    });
+  }
 }
 
 // 健檢項目照片：有本地快取就先立即顯示，背景只查輕量的 itemsVersion；
@@ -426,7 +643,7 @@ function loadItemsAsync() {
   }
 
   // 有快取：先問一個很輕量的版本號，版本沒變就完全不用重新抓圖片清單
-  callApi({ action: 'itemsVersion' }).then(res => {
+  callApiRead({ action: 'itemsVersion' }).then(res => {
     const version = res && res.version;
     if (version === cachedVersion) return; // 版本相同，省下一次 getItems
     fetchFullItems_();
@@ -434,7 +651,7 @@ function loadItemsAsync() {
 }
 
 function fetchFullItems_() {
-  callApi({ action: 'getItems' }).then(res => {
+  callApiRead({ action: 'getItems' }).then(res => {
     const items = (res && res.items) || [];
     const version = res && res.version;
     healthItems = items;
@@ -485,13 +702,15 @@ let employeeList = [];
 let selfPayItems = [];
 
 function loadEmployeesAsync() {
-  callApi({ action: 'employeesPublic' }).then(res => {
+  // 唯讀查詢，可安全重試；失敗只影響「打名字自動帶出部門」，報名表單仍可正常手動填寫
+  callApiRead({ action: 'employeesPublic' }).then(res => {
     employeeList = (res && res.employees) || [];
     refreshDeptSelectIfPresent();
   }).catch(() => {});
 }
 function loadSelfPayItemsAsync() {
-  callApi({ action: 'selfPayItems' }).then(res => {
+  // 唯讀查詢，可安全重試；失敗只影響自費加選下拉，不影響報名主流程
+  callApiRead({ action: 'selfPayItems' }).then(res => {
     selfPayItems = (res && res.items) || [];
     refreshAllSelfPaySelects();
   }).catch(() => {});
@@ -535,9 +754,11 @@ function ensureFormInitialized() {
 
 function personDateOptionsHtml(selectedValue) {
   if (availability.length === 0) return '<option value="">場次載入中…</option>';
+  // 正式場次（會受名額限制）＋ 其他日期（永遠可選、不占名額）
   return '<option value="">請選擇日期</option>' + availability.map(d =>
     `<option value="${escapeHtml(d.date)}" ${d.full?'disabled':''} ${d.date===selectedValue?'selected':''}>${escapeHtml(d.date)}（${d.full?'已額滿':'剩'+d.remaining+'位'}）</option>`
-  ).join('');
+  ).join('') +
+  `<option value="${OTHER_DATE_LABEL}" ${selectedValue===OTHER_DATE_LABEL?'selected':''}>${OTHER_DATE_LABEL}（不占場次名額，需人工確認）</option>`;
 }
 function selfPaySelectHtml() {
   if (selfPayItems.length === 0) return '<option value="">目前尚無自費加選項目</option>';
@@ -613,7 +834,8 @@ function addPersonCard(identity) {
     <div class="field">
       <label>檢查日期 *</label>
       <select id="p${id}_date">${personDateOptionsHtml('')}</select>
-      <div class="hint">每位報名人員可以選擇不同的日期，不需要跟其他人同一天。</div>
+      <input type="date" id="p${id}_otherdate" style="display:none;margin-top:6px;">
+      <div class="hint">每位報名人員可以選擇不同的日期，不需要跟其他人同一天。若正式場次都不方便，可選「其他日期」並指定日期，由人資人工確認。</div>
     </div>
     <div class="field">
       <label>自費加選項目（選填）</label>
@@ -626,6 +848,7 @@ function addPersonCard(identity) {
   `;
   document.getElementById('personsContainer').appendChild(card);
   renumberPersonCards();
+  bindOtherDateToggle(`p${id}_date`, `p${id}_otherdate`);
 
   if (isMain) {
     document.getElementById(`p${id}_name`).addEventListener('input', () => {
@@ -672,30 +895,55 @@ function renumberPersonCards() {
 
 // ---------- 已經報名？追加眷屬 ----------
 let appendMainInfo = null;      // {name, dept, date}，只放顯示需要的最少資訊
-let appendMainIdNumber = '';    // 只存在瀏覽器記憶體，不會顯示在畫面上，用來呼叫追加 API
+let appendToken = '';           // 後端發的一次性 token（10 分鐘），前端永遠拿不到本人的身分證字號
 let appendPersonIdCounter = 0;
 let appendPersonsState = [];
 let appendSelectedSelfPay = {};
 
+// 查詢本人報名：只送「姓名＋完整生日」，不送也不持有任何身分證字號。
+// <input type="date"> 的 value 已經是 yyyy-mm-dd，直接原樣送給後端再正規化比對。
+const APPEND_SEARCH_BTN_TEXT = '查詢本人報名資料';
 document.getElementById('appendSearchBtn').addEventListener('click', () => {
   const name = document.getElementById('appendSearchName').value.trim();
-  const idNumber = document.getElementById('appendSearchIdNum').value.trim();
+  const birthDate = document.getElementById('appendSearchBirthDate').value;
   const msg = document.getElementById('appendSearchMsg');
-  if (!name || !idNumber) { msg.innerHTML = '<div class="msg err">請輸入姓名與身分證字號。</div>'; return; }
+  const btn = document.getElementById('appendSearchBtn');
+  if (!name || !birthDate) { msg.innerHTML = '<div class="msg err">請輸入本人姓名與完整出生日期。</div>'; return; }
   msg.innerHTML = '';
-  callApi({ action: 'findRegistration', name, idNumber }).then(res => {
+  btn.disabled = true; btn.textContent = '查詢中…';
+  callApi({ action: 'findRegistration', name, birthDate }).then(res => {
+    btn.disabled = false; btn.textContent = APPEND_SEARCH_BTN_TEXT;
     if (res.success) {
-      appendMainInfo = { name: res.name, dept: res.dept, date: res.date };
-      appendMainIdNumber = idNumber;
+      // 只保留畫面需要的非敏感欄位；後端 response 本來就不含身分證字號
+      appendMainInfo = { name: res.name, dept: res.dept, date: res.date, otherDate: res.otherDate, otherDateStatus: res.otherDateStatus };
+      appendToken = res.token || '';
       document.getElementById('appendFoundInfo').innerHTML =
-        `已找到您的報名資料<br>姓名：${escapeHtml(res.name)}<br>部門：${escapeHtml(res.dept)}<br>原報名日期：${escapeHtml(res.date)}`;
+        `已找到您的報名資料<br>姓名：${escapeHtml(res.name)}<br>部門：${escapeHtml(res.dept)}<br>原報名日期：${escapeHtml(formatDateForDisplay(res))}`;
       document.getElementById('appendSearchArea').style.display = 'none';
       document.getElementById('appendFoundArea').style.display = 'block';
     } else {
+      // 0 筆與「多筆同名同生日」都由後端決定訊息，前端不猜測、也不列出任何候選人
       msg.innerHTML = `<div class="msg err">${escapeHtml(res.message)}</div>`;
     }
+  }).catch(() => {
+    btn.disabled = false; btn.textContent = APPEND_SEARCH_BTN_TEXT;
+    msg.innerHTML = '<div class="msg err">查詢失敗，請稍後再試一次。</div>';
   });
 });
+
+// token 失效時回到查詢畫面，要求重新查詢
+function resetAppendSearch(message) {
+  appendToken = '';
+  appendMainInfo = null;
+  appendPersonsState = [];
+  appendSelectedSelfPay = {};
+  document.getElementById('appendPersonsContainer').innerHTML = '';
+  document.getElementById('appendSubmitArea').style.display = 'none';
+  document.getElementById('appendFoundArea').style.display = 'none';
+  document.getElementById('appendSearchArea').style.display = 'block';
+  document.getElementById('appendSearchMsg').innerHTML = message
+    ? `<div class="msg err">${escapeHtml(message)}</div>` : '';
+}
 
 document.getElementById('appendAddDepBtn').addEventListener('click', () => addAppendPersonCard());
 
@@ -756,7 +1004,8 @@ function addAppendPersonCard() {
     <div class="field">
       <label>檢查日期 *</label>
       <select id="append_${id}_date">${personDateOptionsHtml('')}</select>
-      <div class="hint">不需要跟本人同一天，可以自行選擇。</div>
+      <input type="date" id="append_${id}_otherdate" style="display:none;margin-top:6px;">
+      <div class="hint">不需要跟本人同一天，可以自行選擇；也可以各自選「其他日期」並指定日期。</div>
     </div>
     <div class="field">
       <label>自費加選項目（選填）</label>
@@ -769,6 +1018,7 @@ function addAppendPersonCard() {
   `;
   document.getElementById('appendPersonsContainer').appendChild(card);
   renumberAppendPersonCards();
+  bindOtherDateToggle(`append_${id}_date`, `append_${id}_otherdate`);
   document.getElementById(`append_${id}_selfpay_add`).addEventListener('click', () => {
     const sel = document.getElementById(`append_${id}_selfpay_select`);
     const item = selfPayItems.find(i => i.id === sel.value);
@@ -823,7 +1073,6 @@ document.getElementById('appendSubmitBtn').addEventListener('click', () => {
     const phone = document.getElementById(`append_${p.id}_phone`).value.trim();
     const breakfast = document.getElementById(`append_${p.id}_breakfast`).value;
     const plan = document.getElementById(`append_${p.id}_plan`).value;
-    const date = document.getElementById(`append_${p.id}_date`).value;
     const who = '眷屬「' + (name || '未填姓名') + '」';
 
     if (!name) { msg.innerHTML = `<div class="msg err">請填寫${who}的姓名。</div>`; return; }
@@ -836,10 +1085,13 @@ document.getElementById('appendSubmitBtn').addEventListener('click', () => {
       return;
     }
     if (!plan) { msg.innerHTML = `<div class="msg err">請選擇${who}的健檢方案。</div>`; return; }
-    if (!date) { msg.innerHTML = `<div class="msg err">請選擇${who}的檢查日期。</div>`; return; }
+    // 每位追加的眷屬同樣可以各自獨立選正式場次或其他日期
+    const ds = readDateSelection(`append_${p.id}_date`, `append_${p.id}_otherdate`, who);
+    if (!ds.ok) { msg.innerHTML = `<div class="msg err">${escapeHtml(ds.message)}</div>`; return; }
 
     persons.push({
-      name, idNumber, birthDate: `民國${byear}年${bmonth}月${bday}日`, phone, breakfast, plan, date,
+      name, idNumber, birthDate: `民國${byear}年${bmonth}月${bday}日`, phone, breakfast, plan,
+      date: ds.date, otherDate: ds.otherDate,
       selfPay: (appendSelectedSelfPay[p.id] || []).map(i => `${i.name}（NT$${i.price}）`).join('、')
     });
   }
@@ -849,9 +1101,11 @@ document.getElementById('appendSubmitBtn').addEventListener('click', () => {
 
   const btn = document.getElementById('appendSubmitBtn');
   btn.disabled = true; btn.textContent = '送出中…';
-  callApi({ action: 'appendDependents', payload: { mainName: appendMainInfo.name, mainIdNumber: appendMainIdNumber, persons, note: '' } })
+  // 只送 token，本人身分證字號由後端用 token 取回後寫入眷屬 M 欄
+  callApi({ action: 'appendDependents', payload: { token: appendToken, persons, note: '' } })
     .then(res => {
       btn.disabled = false; btn.textContent = '確認追加';
+      if (res.tokenExpired) { resetAppendSearch(res.message); return; }
       if (res.success) {
         msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message)}</div>`;
         loadAvailability({ forceRefresh: true });
@@ -931,7 +1185,6 @@ function openConfirmModal() {
     const phone = document.getElementById(`p${p.id}_phone`).value.trim();
     const breakfast = document.getElementById(`p${p.id}_breakfast`).value;
     const plan = document.getElementById(`p${p.id}_plan`).value;
-    const date = document.getElementById(`p${p.id}_date`).value;
     const who = p.identity === '本人' ? '同仁本人' : ('眷屬「' + (name || '未填姓名') + '」');
 
     if (!name) { msg.innerHTML = `<div class="msg err">請填寫${who}的姓名。</div>`; return; }
@@ -944,12 +1197,15 @@ function openConfirmModal() {
       return;
     }
     if (!plan) { msg.innerHTML = `<div class="msg err">請選擇${who}的健檢方案。</div>`; return; }
-    if (!date) { msg.innerHTML = `<div class="msg err">請選擇${who}的檢查日期。</div>`; return; }
+    // 每一位（本人、每位眷屬）各自獨立選正式場次或其他日期，彼此不互相牽動
+    const ds = readDateSelection(`p${p.id}_date`, `p${p.id}_otherdate`, who);
+    if (!ds.ok) { msg.innerHTML = `<div class="msg err">${escapeHtml(ds.message)}</div>`; return; }
 
     persons.push({
       identity: p.identity, name, idNumber,
       birthDate: `民國${byear}年${bmonth}月${bday}日`,
-      phone, breakfast, plan, date,
+      phone, breakfast, plan,
+      date: ds.date, otherDate: ds.otherDate, // 其他日期狀態一律由後端決定，前端不送
       selfPay: (selectedSelfPayByPerson[p.id] || []).map(i => `${i.name}（NT$${i.price}）`).join('、')
     });
   }
@@ -968,7 +1224,7 @@ function openConfirmModal() {
     rows.push(['手機號碼', p.phone]);
     rows.push(['早餐', p.breakfast]);
     rows.push(['健檢方案', p.plan]);
-    rows.push(['檢查日期', p.date]);
+    rows.push(['檢查日期', p.date === OTHER_DATE_LABEL ? `其他日期：${p.otherDate}（待人工確認）` : p.date]);
     rows.push(['自費加選', p.selfPay || '無']);
   });
   rows.push(['備註', note || '無']);
@@ -1060,7 +1316,10 @@ function tryRestoreAdminSession() {
 function logoutAdmin(reasonMsg) {
   adminToken = '';
   clearAdminSession();
-  adminCache = { registrations: null, capacitiesConfig: null, depts: null, employees: null, items: null, selfPayItems: null, historyBatches: null };
+  adminCache = { registrations: null, capacitiesConfig: null, depts: null, employees: null, categories: null, items: null, selfPayItems: null, historyBatches: null };
+  adminLoadState = { core: 'idle', employees: 'idle', items: 'idle', selfPay: 'idle', history: 'idle' };
+  adminLoadError = { core: '', employees: '', items: '', selfPay: '', history: '' };
+  lastAdminCoreRefreshAt = 0;
   try { sessionStorage.removeItem(ADMIN_CACHE_STORAGE_KEY); } catch (e) {}
   document.getElementById('adminContent').style.display = 'none';
   document.getElementById('pinGate').style.display = 'block';
@@ -1091,21 +1350,59 @@ document.getElementById('pinToggle').addEventListener('click', () => {
   const input = document.getElementById('pinInput');
   input.type = input.type === 'password' ? 'text' : 'password';
 });
-document.getElementById('pinSubmit').addEventListener('click', () => {
-  const pin = document.getElementById('pinInput').value.trim();
+// 管理員登入：按鈕點擊與密碼欄按 Enter 共用這一個函式，不存在第二套登入程式。
+// adminLogin 會在後端建立 session token，屬於「會產生副作用」的請求，
+// 因此一律使用 callApi（不重試）；連按 Enter／連點按鈕也被 loginInFlight 擋掉，
+// 避免產生多個孤兒 session token。
+let loginInFlight = false;
+function doAdminLogin() {
+  if (loginInFlight) return;           // 登入進行中，忽略重複送出
+  const input = document.getElementById('pinInput');
+  const btn = document.getElementById('pinSubmit');
   const msg = document.getElementById('pinMsg');
+  const pin = input.value.trim();
+  if (!pin) { showMsg(msg, false, '請輸入管理密碼'); input.focus(); return; }
+
+  loginInFlight = true;
+  const original = setBtnBusy(btn, '登入中…');
+  input.disabled = true;
+  msg.innerHTML = '';
+
+  const finish = () => { loginInFlight = false; restoreBtn(btn, original); input.disabled = false; };
+
+  // pin 只存在這個區域變數裡，送出後不寫入任何全域變數、DOM、localStorage 或 sessionStorage
   callApi({ action: 'adminLogin', pin }).then(res => {
-    if (res.success && res.token) {
+    if (res && res.success && res.token) {
       adminToken = res.token;
+      input.value = '';              // 成功後立即清掉輸入框裡的明文密碼
+      input.type = 'password';       // 若先前按過「顯示密碼」，回復成遮蔽狀態
+      finish();
       document.getElementById('pinGate').style.display = 'none';
       document.getElementById('adminContent').style.display = 'block';
       saveAdminSession();
       startAdminIdleWatch();
       bootstrapAdminCache();
     } else {
-      msg.innerHTML = '<div class="msg err">密碼錯誤</div>';
+      finish();
+      // 顯示後端實際回報的原因，不再一律寫死「密碼錯誤」
+      showMsg(msg, false, (res && res.message) ? res.message : '登入失敗，請稍後再試一次');
+      input.focus();
+      input.select();
     }
+  }).catch(() => {
+    // 原本沒有 catch，網路失敗時畫面完全沒有反應，使用者只會覺得「按了沒用」
+    finish();
+    showMsg(msg, false, '連線失敗，請確認網路後再試一次');
+    input.focus();
   });
+}
+
+document.getElementById('pinSubmit').addEventListener('click', doAdminLogin);
+// Enter 直接登入，與按鈕走完全相同的 doAdminLogin()
+document.getElementById('pinInput').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();   // 避免瀏覽器把 Enter 當成隱含的表單送出
+  doAdminLogin();
 });
 
 document.querySelector('.tab-btn[data-page="admin"]').addEventListener('click', () => {
@@ -1127,11 +1424,16 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
 function adminContentVisible() {
   return document.getElementById('adminContent').style.display !== 'none';
 }
-// 分頁重新變成可見時，背景重新整理整包 admin cache（不會擋畫面，資料有變動才會讓畫面看起來不同）
+// 分頁重新變成可見時，只背景刷新「核心資料」（rosterInit 一支），而且有節流。
+// 原本每次切回分頁都無條件重打 5 支 API：管理員 alt-tab 10 次就是 50 次 Apps Script 請求。
+// 次要資料（員工／項目／自費／歷史）不會頻繁變動，交給各自的寫入成功後精準刷新即可。
+// 這不是 polling：只有使用者真的切回這個分頁才會觸發，沒有任何定時器在背景重複發送。
+const ADMIN_VISIBILITY_REFRESH_MIN_GAP = 60000; // 兩次背景刷新至少間隔 60 秒
+let lastAdminCoreRefreshAt = 0;
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && adminToken && adminContentVisible()) {
-    bootstrapAdminCache();
-  }
+  if (document.visibilityState !== 'visible' || !adminToken || !adminContentVisible()) return;
+  if (Date.now() - lastAdminCoreRefreshAt < ADMIN_VISIBILITY_REFRESH_MIN_GAP) return;
+  refreshAdminCore();
 });
 
 // ---------- 管理後台記憶體 cache ----------
@@ -1139,7 +1441,8 @@ let adminCache = {
   registrations: null,    // 全部報名資料（未依部門篩選），每一列一個人
   capacitiesConfig: null, // { 日期: 人數上限 }
   depts: null,
-  employees: null,
+  employees: null,      // [{row, name, dept, category}]
+  categories: null,     // 三個合法歸類，由後端提供，前端不寫死
   items: null,
   selfPayItems: null,
   historyBatches: null
@@ -1156,33 +1459,86 @@ function hydrateAdminCacheFromStorage() {
   } catch (e) {}
 }
 
-// 登入 / 重新整理頁面後：先用暫存資料（若有）立即顯示，同時一定會平行呼叫既有的幾支 API 拿最新資料，
-// 拿到後整包覆蓋 adminCache 並重新渲染。之後在管理後台內切換分頁，只從這份 adminCache 讀取，不再打 API。
+// 每一區塊各自的載入狀態：'idle' | 'loading' | 'ok' | 'error'
+// 有了它，某一支次要 API 失敗時只會讓「它自己那一個分頁」顯示錯誤，
+// 總覽與名冊完全不受影響，也不會整頁變成「載入失敗」。
+let adminLoadState = { core: 'idle', employees: 'idle', items: 'idle', selfPay: 'idle', history: 'idle' };
+let adminLoadError = { core: '', employees: '', items: '', selfPay: '', history: '' };
+
+// 核心資料：總覽（dashboard）與名冊（roster）需要的一切。
+// rosterInit 後端已經把 dashboard + roster + depts + capacities 合併成一支，
+// 而且在後端只讀一次「報名資料」工作表，所以這裡不再另外呼叫 dashboard / roster / departments。
+function refreshAdminCore() {
+  adminLoadState.core = 'loading';
+  adminLoadError.core = '';
+  lastAdminCoreRefreshAt = Date.now();
+  renderCurrentAdminView();
+  // 唯讀查詢，連線失敗時最多自動重試 2 次
+  return callApiRead({ action: 'rosterInit', token: adminToken, dept: '' }).then(res => {
+    if (res && res.success) {
+      adminCache.registrations = res.rows || [];
+      adminCache.depts = res.depts || [];
+      const capMap = {};
+      (res.dashboard && res.dashboard.dates || []).forEach(d => { capMap[d.date] = d.capacity; });
+      adminCache.capacitiesConfig = capMap;
+      adminLoadState.core = 'ok';
+      persistAdminCache();
+    } else {
+      adminLoadState.core = 'error';
+      adminLoadError.core = (res && res.message) ? res.message : '資料載入失敗';
+    }
+    renderCurrentAdminView();
+  }).catch(() => {
+    adminLoadState.core = 'error';
+    adminLoadError.core = '連線失敗，請確認網路後再試一次';
+    renderCurrentAdminView();
+  });
+}
+
+// 次要資料：每一支各自獨立 then/catch，互不影響，也不會影響核心資料。
+// 任何一支失敗都只把自己的狀態標成 error，其他區塊照常運作。
+function loadAdminSecondary() {
+  const one = (key, payload, apply) => {
+    adminLoadState[key] = 'loading';
+    adminLoadError[key] = '';
+    return callApiRead(payload).then(res => {
+      if (res && res.success !== false) {
+        apply(res);
+        adminLoadState[key] = 'ok';
+        persistAdminCache();
+      } else {
+        adminLoadState[key] = 'error';
+        adminLoadError[key] = (res && res.message) ? res.message : '載入失敗';
+      }
+    }).catch(() => {
+      adminLoadState[key] = 'error';
+      adminLoadError[key] = '連線失敗，請稍後再試一次';
+    }).then(() => { renderCurrentAdminView(); });
+  };
+
+  // allSettled：任何一支 reject 都不會讓其他支或整體流程中斷
+  return Promise.allSettled([
+    one('employees', { action: 'employees', token: adminToken }, res => {
+      adminCache.employees = res.employees || [];
+      adminCache.categories = res.categories || adminCache.categories;
+    }),
+    one('items', { action: 'getItems' }, res => { adminCache.items = res.items || []; }),
+    one('selfPay', { action: 'selfPayItems' }, res => { adminCache.selfPayItems = res.items || []; }),
+    one('history', { action: 'historyBatches', token: adminToken }, res => { adminCache.historyBatches = res.batches || []; })
+  ]);
+}
+
+// 登入 / 重新整理頁面後的載入流程：
+// 1. 先用 sessionStorage 暫存資料（若有）立即畫出畫面，使用者不會看到空白。
+// 2. 核心 rosterInit 單獨先送，獨佔 Apps Script 的併發額度，總覽／名冊最快出現。
+// 3. 核心結束（成功或失敗都算）之後才送 4 支次要 API，不跟核心搶資源、也不擋核心畫面。
+// 注意：暫存資料只用於「先畫面上有東西」，背景一定會重新向後端取最新資料並覆蓋，
+//       而且任何寫入判斷（名額、重複身分證字號）都在後端 LockService 內重讀試算表，
+//       完全不依賴這份前端 cache。
 function bootstrapAdminCache() {
   hydrateAdminCacheFromStorage();
-  if (adminCache.registrations) renderCurrentAdminView();
-
-  return Promise.all([
-    callApi({ action: 'rosterInit', token: adminToken, dept: '' }),
-    callApi({ action: 'employees', token: adminToken }),
-    callApi({ action: 'getItems' }),
-    callApi({ action: 'selfPayItems' }),
-    callApi({ action: 'historyBatches', token: adminToken })
-  ]).then(([rosterRes, empRes, itemsRes, selfPayRes, historyRes]) => {
-    if (rosterRes && rosterRes.success) {
-      adminCache.registrations = rosterRes.rows || [];
-      adminCache.depts = rosterRes.depts || [];
-      const capMap = {};
-      (rosterRes.dashboard && rosterRes.dashboard.dates || []).forEach(d => { capMap[d.date] = d.capacity; });
-      adminCache.capacitiesConfig = capMap;
-    }
-    if (empRes && empRes.success) adminCache.employees = empRes.employees || [];
-    if (itemsRes) adminCache.items = itemsRes.items || [];
-    if (selfPayRes) adminCache.selfPayItems = selfPayRes.items || [];
-    if (historyRes && historyRes.success) adminCache.historyBatches = historyRes.batches || [];
-    persistAdminCache();
-    renderCurrentAdminView();
-  }).catch(() => {});
+  renderCurrentAdminView();
+  return refreshAdminCore().then(() => loadAdminSecondary());
 }
 
 // 依 adminCache.registrations + capacitiesConfig 在前端本地重新計算場次統計，不需要重新讀取 Sheet
@@ -1205,11 +1561,68 @@ function computeDashboard() {
   };
 }
 
+// 每個分頁各自需要哪一份資料、資料還沒到時要把狀態訊息畫在哪個容器
+const ADMIN_VIEW_DEPS = {
+  dashboard:    { key: 'core',      container: 'dashGrid',          label: '總覽' },
+  roster:       { key: 'core',      container: 'rosterTableWrap',   label: '名冊' },
+  settings:     { key: 'core',      container: 'settingsList',      label: '場次設定' },
+  employees:    { key: 'employees', container: 'empListWrap',       label: '員工資料' },
+  unregistered: { key: 'employees', container: 'unregTableWrap',    label: '員工名單' },
+  items:        { key: 'items',     container: 'itemsListWrap',     label: '健檢項目照片' },
+  selfpay:      { key: 'selfPay',   container: 'selfPayListWrap',   label: '自費項目' },
+  history:      { key: 'history',   container: 'historyBatchList',  label: '歷史梯次' }
+};
+
+// 在該分頁自己的容器裡顯示載入中／失敗訊息，並附上只重試「這一塊」的按鈕。
+// 一支次要 API 失敗不會影響其他分頁，也不會讓整頁變成「載入失敗」。
+function renderAdminSectionStatus(view, dep) {
+  const wrap = document.getElementById(dep.container);
+  if (!wrap) return;
+  const state = adminLoadState[dep.key];
+  if (state === 'error') {
+    wrap.innerHTML =
+      `<div class="msg err">${escapeHtml(dep.label)}載入失敗：${escapeHtml(adminLoadError[dep.key] || '')}
+         <button class="btn ghost small" id="retrySectionBtn" style="margin-left:8px;">重新載入${escapeHtml(dep.label)}</button>
+       </div>`;
+    const btn = document.getElementById('retrySectionBtn');
+    if (btn) btn.addEventListener('click', () => { retryAdminSection(dep.key); });
+  } else {
+    wrap.innerHTML = `<div class="loading">${escapeHtml(dep.label)}載入中…</div>`;
+  }
+  if (view === 'dashboard') document.getElementById('statRow').innerHTML = '';
+}
+
+// 只重新載入某一個區塊，不會動到其他區塊已經拿到的資料
+function retryAdminSection(key) {
+  if (key === 'core') { refreshAdminCore(); return; }
+  if (key === 'employees') { refreshEmployeesCache(); return; }
+  if (key === 'items') { refreshItemsCache(); return; }
+  if (key === 'selfPay') { refreshSelfPayCache(); return; }
+  if (key === 'history') { refreshHistoryBatchesCache(); return; }
+}
+
 function renderCurrentAdminView() {
-  if (!adminCache.registrations) return; // 資料還沒抓回來，先不渲染
+  const dep = ADMIN_VIEW_DEPS[currentAdminView];
+  if (!dep) return;
+  // 這個分頁需要的那一份資料還沒到（或載入失敗）→ 只在這個分頁顯示狀態，其他分頁不受影響
+  const data = dep.key === 'core' ? adminCache.registrations
+    : dep.key === 'employees' ? adminCache.employees
+    : dep.key === 'items' ? adminCache.items
+    : dep.key === 'selfPay' ? adminCache.selfPayItems
+    : adminCache.historyBatches;
+  if (data == null) { renderAdminSectionStatus(currentAdminView, dep); return; }
+
+  // unregistered 同時需要 employees 與核心報名資料，兩者都到齊才畫得出來。
+  // 狀態訊息必須畫在「未報名提醒」自己的容器，不能寫到名冊的容器（那是另一個分頁）。
+  if (currentAdminView === 'unregistered' && adminCache.registrations == null) {
+    renderAdminSectionStatus(currentAdminView, { key: 'core', container: 'unregTableWrap', label: '報名資料' });
+    return;
+  }
+
   if (currentAdminView === 'dashboard') renderDashboard(computeDashboard());
   else if (currentAdminView === 'roster') renderRosterView();
   else if (currentAdminView === 'settings') renderSettingsList(computeDashboard());
+  else if (currentAdminView === 'employees') renderEmployeesAdmin();
   else if (currentAdminView === 'unregistered') renderUnregisteredView();
   else if (currentAdminView === 'items') renderItemsAdmin(adminCache.items || []);
   else if (currentAdminView === 'selfpay') renderSelfPayAdmin(adminCache.selfPayItems || []);
@@ -1223,8 +1636,15 @@ function sanitizeForExport(value) {
   return s;
 }
 const EXPORT_HEADER = ['姓名', '身份', '部門', '身份證字號', '出生日期', '手機號碼', '早餐', '日期', '方案', '自費項目', '備註'];
+// SheetJS 改成按需載入：先確保它載好再產生 .xlsx。
+// 只有「函式庫載入失敗」才走下面原本就存在的 CSV 備援路徑（用 then 的第二個參數，
+// 這樣 xlsx 產生過程中自己丟出的錯誤不會被誤判成載入失敗而悄悄降級成 CSV）。
 function exportRowsToFile(rows, filenameBase) {
-  if (typeof XLSX !== 'undefined') {
+  return ensureXlsxLoaded().then(() => writeRowsAsXlsx_(rows, filenameBase),
+                                 () => writeRowsAsCsv_(rows, filenameBase));
+}
+function writeRowsAsXlsx_(rows, filenameBase) {
+  {
     const aoa = [EXPORT_HEADER, ...rows.map(r => [
       sanitizeForExport(r.name), sanitizeForExport(r.identity), sanitizeForExport(r.dept),
       sanitizeForExport(r.idNumber || ''), sanitizeForExport(r.birthDate || ''), sanitizeForExport(r.phone || ''),
@@ -1240,7 +1660,10 @@ function exportRowsToFile(rows, filenameBase) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '名冊');
     XLSX.writeFile(wb, filenameBase + '.xlsx');
-  } else {
+  }
+}
+function writeRowsAsCsv_(rows, filenameBase) {
+  {
     // 備援方案：XLSX 函式庫載入失敗時，退回 Excel 相容的 CSV（只在匯出檔使用 ="..." 寫法，不會寫回 Sheet 或畫面）
     const csvRows = [EXPORT_HEADER, ...rows.map(r => [
       sanitizeForExport(r.name), sanitizeForExport(r.identity), sanitizeForExport(r.dept),
@@ -1289,7 +1712,7 @@ function renderRosterView() {
 }
 function loadRoster() { renderRosterView(); } // 名稱沿用，實際上不再打 API，直接從 cache 渲染
 document.getElementById('deptFilter').addEventListener('change', loadRoster);
-document.getElementById('refreshRoster').addEventListener('click', () => bootstrapAdminCache());
+document.getElementById('refreshRoster').addEventListener('click', () => refreshAdminCore());
 
 function renderRoster(rows) {
   const wrap = document.getElementById('rosterTableWrap');
@@ -1299,15 +1722,18 @@ function renderRoster(rows) {
       <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity||'本人')}</td><td>${escapeHtml(r.dept)}</td>
       <td>${escapeHtml(r.idNumber||'—')}</td><td>${escapeHtml(r.birthDate||'—')}</td>
       <td>${escapeHtml(r.phone||'—')}</td><td>${escapeHtml(r.breakfast||'—')}</td>
-      <td>${escapeHtml(r.date)}</td>
+      <td>${escapeHtml(formatDateForDisplay(r))}</td>
       <td>${escapeHtml(r.plan||'—')}</td>
       <td style="max-width:180px;font-size:12px;">${escapeHtml(r.selfPay||'—')}</td>
       <td style="max-width:160px;font-size:12px;">${escapeHtml(r.note||'—')}</td>
       <td>
         <select class="dateChangeSelect" data-idx="${idx}" style="padding:4px 6px;font-size:12px;">
           ${currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('')}
+          <option value="${OTHER_DATE_LABEL}" ${r.date===OTHER_DATE_LABEL?'selected':''}>${OTHER_DATE_LABEL}</option>
         </select>
-        <button class="btn ghost small changeDateBtn" data-idx="${idx}" style="margin-left:4px;">更改</button>
+        <input type="date" class="dateChangeOther" data-idx="${idx}" value="${escapeHtml(r.date===OTHER_DATE_LABEL?(r.otherDate||''):'')}"
+               style="display:${r.date===OTHER_DATE_LABEL?'block':'none'};margin-top:4px;padding:4px 6px;font-size:12px;">
+        <button class="btn ghost small changeDateBtn" data-idx="${idx}" style="margin-top:4px;">更改</button>
       </td>
       <td>
         <button class="btn ghost small editRegBtn" data-idx="${idx}">編輯</button>
@@ -1315,38 +1741,55 @@ function renderRoster(rows) {
       </td>
     </tr>`).join('')}</tbody></table>`;
 
+  // 選到「其他日期」才顯示日期 picker
+  wrap.querySelectorAll('.dateChangeSelect').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const input = wrap.querySelector(`.dateChangeOther[data-idx="${sel.dataset.idx}"]`);
+      if (!input) return;
+      const isOther = sel.value === OTHER_DATE_LABEL;
+      input.style.display = isOther ? 'block' : 'none';
+      if (!isOther) input.value = '';
+    });
+  });
+
   wrap.querySelectorAll('.changeDateBtn').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = btn.dataset.idx;
       const select = wrap.querySelector(`.dateChangeSelect[data-idx="${idx}"]`);
+      const otherInput = wrap.querySelector(`.dateChangeOther[data-idx="${idx}"]`);
       const newDate = select.value;
+      const newOtherDate = otherInput ? otherInput.value : '';
       const r = rows[idx];
-      if (newDate === r.date) return;
-      if (!confirm(`確定要把 ${r.name} 的場次改成 ${newDate} 嗎？`)) return;
-      callApi({ action: 'changeDate', token: adminToken, timestamp: r.timestamp, idNumber: r.idNumber, newDate }).then(res => {
-        if (res.success) {
-          const reg = adminCache.registrations.find(x => x.timestamp === r.timestamp && x.idNumber === r.idNumber);
-          if (reg) reg.date = newDate;
-          persistAdminCache();
-          renderCurrentAdminView();
+      if (newDate === r.date && newDate !== OTHER_DATE_LABEL) return;
+      if (newDate === OTHER_DATE_LABEL && !newOtherDate) { alert('選擇「其他日期」時必須指定實際日期'); return; }
+      const label = newDate === OTHER_DATE_LABEL ? `其他日期 ${newOtherDate}（待人工確認）` : newDate;
+      runMutation({
+        button: btn,
+        confirmText: `確定要把 ${r.name} 的場次改成 ${label} 嗎？`,
+        busyText: '儲存中...',
+        payload: { action: 'changeDate', token: adminToken, timestamp: r.timestamp, idNumber: r.idNumber, newDate, newOtherDate },
+        onSuccess: (res) => {
+          // 等後端成功才重新向後端取整包最新資料，不在前端猜測結果
+          refreshAdminCore();
           loadAvailability({ forceRefresh: true }); // 首頁場次名額立即更新
           alert(res.message || '已更改');
-        } else { alert(res.message || '更改失敗'); }
+        }
       });
     });
   });
   wrap.querySelectorAll('.deleteRegBtn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const idx = btn.dataset.idx;
-      const r = rows[idx];
-      if (!confirm(`確定要刪除 ${r.name} 的報名紀錄嗎？此動作無法復原。`)) return;
-      callApi({ action: 'deleteRegistration', token: adminToken, timestamp: r.timestamp, idNumber: r.idNumber }).then(res => {
-        if (res.success) {
-          adminCache.registrations = adminCache.registrations.filter(x => !(x.timestamp === r.timestamp && x.idNumber === r.idNumber));
-          persistAdminCache();
-          renderCurrentAdminView();
-          loadAvailability({ forceRefresh: true }); // 首頁場次名額立即更新
-        } else { alert(res.message || '刪除失敗'); }
+      const r = rows[btn.dataset.idx];
+      runMutation({
+        button: btn,
+        confirmText: `確定要刪除嗎？（${r.name} 的報名紀錄，此動作無法復原）`,
+        busyText: '刪除中...',
+        payload: { action: 'deleteRegistration', token: adminToken, timestamp: r.timestamp, idNumber: r.idNumber },
+        onSuccess: () => {
+          // 刪除成功後才重新抓資料；失敗（例如本人尚有眷屬）畫面完全不動
+          refreshAdminCore();
+          loadAvailability({ forceRefresh: true });
+        }
       });
     });
   });
@@ -1367,8 +1810,27 @@ function openEditModal(r) {
   document.getElementById('editBirthDate').value = r.birthDate || '';
   document.getElementById('editPhone').value = r.phone || '';
   document.getElementById('editBreakfast').value = r.breakfast || '';
-  document.getElementById('editDate').innerHTML = currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('');
-  document.getElementById('editPlan').value = r.plan || '';
+  document.getElementById('editDate').innerHTML =
+    currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('') +
+    `<option value="${OTHER_DATE_LABEL}" ${r.date===OTHER_DATE_LABEL?'selected':''}>${OTHER_DATE_LABEL}（不占名額）</option>`;
+  document.getElementById('editOtherDate').value = (r.date === OTHER_DATE_LABEL) ? (r.otherDate || '') : '';
+  bindOtherDateToggle('editDate', 'editOtherDate');
+  // 方案：只接受「A案」「B案」。既有資料若是其他值（或空白），
+  // 一律「不預選任何一個」並明確警告，強制管理員人工判斷後才能儲存。
+  // 絕不自動選 A案、也絕不自動選 B案，不靜默修改任何既有資料。
+  const planSel = document.getElementById('editPlan');
+  const planWarn = document.getElementById('editPlanWarn');
+  const currentPlan = String(r.plan == null ? '' : r.plan).trim();
+  if (currentPlan === 'A案' || currentPlan === 'B案') {
+    planSel.value = currentPlan;
+    planWarn.style.display = 'none';
+    planWarn.textContent = '';
+  } else {
+    planSel.value = ''; // 停在「請選擇方案」，不猜測
+    planWarn.style.display = 'block';
+    planWarn.textContent = '⚠ 這筆資料目前的方案是「' + (currentPlan || '（空白）') +
+      '」，不是「A案」或「B案」。系統不會自動幫您選，請人工確認正確方案後再儲存。';
+  }
   document.getElementById('editSelfPay').value = r.selfPay || '';
   document.getElementById('editNote').value = r.note || '';
   document.getElementById('editMsg').innerHTML = '';
@@ -1386,26 +1848,67 @@ document.getElementById('editSaveBtn').addEventListener('click', () => {
     phone: document.getElementById('editPhone').value.trim(),
     breakfast: document.getElementById('editBreakfast').value,
     date: document.getElementById('editDate').value,
+    otherDate: document.getElementById('editOtherDate').value, // 狀態由後端固定寫入，前端不送
     plan: document.getElementById('editPlan').value.trim(),
     selfPay: document.getElementById('editSelfPay').value.trim(),
     note: document.getElementById('editNote').value.trim()
   };
+  if (fields.date === OTHER_DATE_LABEL && !fields.otherDate) {
+    showMsg(document.getElementById('editMsg'), false, '選擇「其他日期」時必須指定實際日期');
+    return;
+  }
+  // 方案必須是 A案 或 B案 才能送出。既有資料是異常值時，下拉會停在空白，
+  // 這裡擋下來要求人工選擇；後端 editRegistration_ 也有同樣的白名單當第二道防線。
+  if (fields.plan !== 'A案' && fields.plan !== 'B案') {
+    showMsg(document.getElementById('editMsg'), false, '請選擇健檢方案（A案 或 B案）後再儲存');
+    document.getElementById('editPlan').focus();
+    return;
+  }
   // 用「修改前的身分證字號」定位資料，不能用改完之後的新值去找，同批本人＋眷屬共用同一個 timestamp 時才不會找錯人
-  callApi({ action: 'editRegistration', token: adminToken, timestamp: editingTimestamp, originalIdNumber: editingOriginalIdNumber, fields }).then(res => {
-    if (res.success) {
-      const reg = adminCache.registrations.find(x => x.timestamp === editingTimestamp && x.idNumber === editingOriginalIdNumber);
-      if (reg) Object.assign(reg, fields);
-      persistAdminCache();
+  runMutation({
+    button: document.getElementById('editSaveBtn'),
+    msgEl: document.getElementById('editMsg'),
+    busyText: '儲存中...', doneText: '✓ 修改已儲存',
+    payload: { action: 'editRegistration', token: adminToken, timestamp: editingTimestamp, originalIdNumber: editingOriginalIdNumber, fields },
+    onSuccess: () => {
       document.getElementById('editModal').style.display = 'none';
-      renderCurrentAdminView();
+      refreshAdminCore(); // 成功後重新向後端取最新名冊／統計，不 optimistic 改本地物件
       loadAvailability({ forceRefresh: true }); // 日期／人數可能被改動，首頁名額立即更新
-    } else {
-      document.getElementById('editMsg').innerHTML = `<div class="msg err">${escapeHtml(res.message||'更新失敗')}</div>`;
     }
   });
 });
 document.getElementById('exportBtn').addEventListener('click', () => {
-  exportRowsToFile(adminCache.registrations || [], '健檢報名名冊');
+  // 匯出一律先向後端取最新名冊再產生檔案，標準與「輸出健檢時程表」一致，
+  // 不以可能過期的 adminCache.registrations 當作最終資料來源。
+  // 重用既有的唯讀 rosterInit，不新增任何 API action，也不會觸發任何寫入。
+  const btn = document.getElementById('exportBtn');
+  const original = setBtnBusy(btn, '取得最新資料中…');
+  callApiRead({ action: 'rosterInit', token: adminToken, dept: '' }).then(res => {
+    if (!res || !res.success || !Array.isArray(res.rows)) {
+      // 取不到最新資料就不產生檔案，絕不退回用舊 cache 匯出可能過期的名冊
+      restoreBtn(btn, original);
+      alert('無法取得最新報名資料，請稍後再試。');
+      return;
+    }
+    // 順便把這份最新資料更新回 adminCache，讓畫面與匯出的內容一致
+    adminCache.registrations = res.rows;
+    adminCache.depts = res.depts || adminCache.depts;
+    const capMap = {};
+    (res.dashboard && res.dashboard.dates || []).forEach(d => { capMap[d.date] = d.capacity; });
+    if (Object.keys(capMap).length > 0) adminCache.capacitiesConfig = capMap;
+    adminLoadState.core = 'ok';
+    adminLoadError.core = '';
+    lastAdminCoreRefreshAt = Date.now();
+    persistAdminCache();
+    renderCurrentAdminView();
+
+    btn.textContent = '產生檔案中…';
+    // 匯出的來源是剛拿到的 res.rows，不是 cache
+    return exportRowsToFile(res.rows, '健檢報名名冊').then(() => restoreBtn(btn, original));
+  }).catch(() => {
+    restoreBtn(btn, original);
+    alert('無法取得最新報名資料，請稍後再試。');
+  });
 });
 
 function renderSettingsList(data) {
@@ -1420,28 +1923,29 @@ function renderSettingsList(data) {
       <input type="number" min="1" value="${d.capacity}" data-date="${escapeHtml(d.date)}" class="capInput" style="width:80px;">
       <button class="btn ghost small saveCapBtn" data-date="${escapeHtml(d.date)}">更新上限</button>
       <button class="btn danger small delDateBtn" data-date="${escapeHtml(d.date)}">刪除場次</button>
-    </div>`).join('');
+    </div>`).join('') + '<div id="settingsMsg"></div>';
   document.querySelectorAll('.saveCapBtn').forEach(btn => {
     btn.addEventListener('click', () => {
       const date = btn.dataset.date;
       const input = document.querySelector(`.capInput[data-date="${CSS.escape(date)}"]`);
       const newCap = Number(input.value);
-      callApi({ action: 'updateCapacity', token: adminToken, date, capacity: newCap }).then(res => {
-        adminCache.capacitiesConfig[date] = newCap;
-        persistAdminCache();
-        renderCurrentAdminView();
-        loadAvailability({ forceRefresh: true });
+      if (!newCap || newCap < 1) { showMsg(document.getElementById('settingsMsg'), false, '人數上限必須是 1 以上的數字'); return; }
+      runMutation({
+        button: btn, msgEl: document.getElementById('settingsMsg'),
+        busyText: '儲存中...', doneText: '✓ 修改已儲存',
+        payload: { action: 'updateCapacity', token: adminToken, date, capacity: newCap },
+        onSuccess: () => { refreshAdminCore(); loadAvailability({ forceRefresh: true }); }
       });
     });
   });
   document.querySelectorAll('.delDateBtn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('確定要刪除「' + btn.dataset.date + '」這個場次嗎？')) return;
-      callApi({ action: 'removeDate', token: adminToken, date: btn.dataset.date }).then(res => {
-        delete adminCache.capacitiesConfig[btn.dataset.date];
-        persistAdminCache();
-        renderCurrentAdminView();
-        loadAvailability({ forceRefresh: true });
+      runMutation({
+        button: btn, msgEl: document.getElementById('settingsMsg'),
+        confirmText: '確定要刪除嗎？（場次「' + btn.dataset.date + '」）',
+        busyText: '刪除中...', doneText: '✓ 已刪除',
+        payload: { action: 'removeDate', token: adminToken, date: btn.dataset.date },
+        onSuccess: () => { refreshAdminCore(); loadAvailability({ forceRefresh: true }); }
       });
     });
   });
@@ -1451,12 +1955,141 @@ document.getElementById('addDateBtn').addEventListener('click', () => {
   const date = document.getElementById('newDate').value.trim();
   const cap = Number(document.getElementById('newCap').value);
   if (!date || !cap) { alert('請輸入日期與人數上限'); return; }
-  callApi({ action: 'addDate', token: adminToken, date, capacity: cap }).then(res => {
-    adminCache.capacitiesConfig[date] = cap;
-    persistAdminCache();
-    document.getElementById('newDate').value = '';
+  runMutation({
+    button: document.getElementById('addDateBtn'),
+    msgEl: document.getElementById('settingsMsg'),
+    busyText: '儲存中...', doneText: '✓ 已新增',
+    payload: { action: 'addDate', token: adminToken, date, capacity: cap },
+    onSuccess: () => {
+      document.getElementById('newDate').value = '';
+      refreshAdminCore();
+      loadAvailability({ forceRefresh: true });
+    }
+  });
+});
+
+// ---------- 員工管理：姓名／部門／歸類 ----------
+// 歸類是獨立欄位，與部門互不推導；合法值由後端提供，前端不寫死。
+function categoryOptionsHtml(selected) {
+  const cats = adminCache.categories || [];
+  return '<option value="">請選擇歸類</option>' + cats.map(c =>
+    `<option value="${escapeHtml(c)}" ${c === selected ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
+}
+
+function renderEmployeesAdmin() {
+  const cats = adminCache.categories || [];
+  const newSel = document.getElementById('newEmpCategory');
+  if (newSel && newSel.options.length !== cats.length + 1) newSel.innerHTML = categoryOptionsHtml('');
+
+  const filterSel = document.getElementById('empCategoryFilter');
+  const currentFilter = filterSel.value;
+  filterSel.innerHTML = '<option value="">全部歸類</option>' +
+    cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('') +
+    '<option value="__none__">尚未設定歸類</option>';
+  filterSel.value = currentFilter;
+
+  const all = adminCache.employees || [];
+  const rows = !currentFilter ? all
+    : (currentFilter === '__none__' ? all.filter(e => !e.category) : all.filter(e => e.category === currentFilter));
+
+  const wrap = document.getElementById('empListWrap');
+  if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的員工</div><div id="empRowMsg"></div>'; return; }
+  wrap.innerHTML = `<table style="min-width:780px;"><thead><tr>
+      <th>姓名</th><th>部門</th><th>歸類</th><th>操作</th></tr></thead><tbody>
+    ${rows.map(e => `<tr data-row="${e.row}">
+      <td><input class="empName" value="${escapeHtml(e.name)}" style="min-width:110px;"></td>
+      <td><input class="empDept" value="${escapeHtml(e.dept)}" style="min-width:110px;"></td>
+      <td><select class="empCategory" style="min-width:210px;">${categoryOptionsHtml(e.category)}</select></td>
+      <td style="white-space:nowrap;">
+        <button class="btn small empSaveBtn">儲存</button>
+        <button class="btn danger small empDeleteBtn">刪除</button>
+      </td></tr>`).join('')}
+    </tbody></table><div id="empRowMsg"></div>`;
+
+  wrap.querySelectorAll('.empSaveBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tr = btn.closest('tr');
+      const row = Number(tr.dataset.row);
+      const original = (adminCache.employees || []).find(e => e.row === row);
+      if (!original) { showMsg(document.getElementById('empRowMsg'), false, '員工名單已變動，請重新整理後再試一次'); return; }
+      runMutation({
+        button: btn, msgEl: document.getElementById('empRowMsg'),
+        busyText: '儲存中...', doneText: '✓ 修改已儲存',
+        payload: {
+          action: 'saveEmployee', token: adminToken,
+          employee: {
+            row: row,
+            name: tr.querySelector('.empName').value.trim(),
+            dept: tr.querySelector('.empDept').value.trim(),
+            category: tr.querySelector('.empCategory').value,
+            originalName: original.name, originalDept: original.dept
+          }
+        },
+        onSuccess: () => refreshEmployeesCache()
+      });
+    });
+  });
+
+  wrap.querySelectorAll('.empDeleteBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tr = btn.closest('tr');
+      const row = Number(tr.dataset.row);
+      const original = (adminCache.employees || []).find(e => e.row === row);
+      if (!original) { showMsg(document.getElementById('empRowMsg'), false, '員工名單已變動，請重新整理後再試一次'); return; }
+      runMutation({
+        button: btn, msgEl: document.getElementById('empRowMsg'),
+        confirmText: `確定要刪除嗎？（${original.name}／${original.dept}）`,
+        busyText: '刪除中...', doneText: '✓ 已刪除',
+        payload: {
+          action: 'deleteEmployee', token: adminToken,
+          employee: { row: row, originalName: original.name, originalDept: original.dept }
+        },
+        onSuccess: () => refreshEmployeesCache()
+      });
+    });
+  });
+}
+
+// 員工資料異動後一律回後端重新取最新名單，不在前端 optimistic 改陣列
+function refreshEmployeesCache() {
+  adminLoadState.employees = 'loading'; adminLoadError.employees = '';
+  return callApiRead({ action: 'employees', token: adminToken }).then(res => {
+    if (res && res.success) {
+      adminCache.employees = res.employees || [];
+      adminCache.categories = res.categories || adminCache.categories;
+      adminLoadState.employees = 'ok';
+      persistAdminCache();
+      renderCurrentAdminView(); // 員工管理與未報名提醒都會一起更新
+    } else {
+      adminLoadState.employees = 'error';
+      adminLoadError.employees = (res && res.message) ? res.message : '載入失敗';
+      renderCurrentAdminView();
+    }
+  }).catch(() => {
+    adminLoadState.employees = 'error';
+    adminLoadError.employees = '連線失敗，請稍後再試一次';
     renderCurrentAdminView();
-    loadAvailability({ forceRefresh: true });
+  });
+}
+
+document.getElementById('empCategoryFilter').addEventListener('change', renderEmployeesAdmin);
+document.getElementById('refreshEmpBtn').addEventListener('click', () => refreshEmployeesCache());
+document.getElementById('addEmpBtn').addEventListener('click', () => {
+  const name = document.getElementById('newEmpName').value.trim();
+  const dept = document.getElementById('newEmpDept').value.trim();
+  const category = document.getElementById('newEmpCategory').value;
+  const msg = document.getElementById('addEmpMsg');
+  if (!name || !dept || !category) { showMsg(msg, false, '姓名、部門、歸類都必須填寫'); return; }
+  runMutation({
+    button: document.getElementById('addEmpBtn'), msgEl: msg,
+    busyText: '儲存中...', doneText: '✓ 已新增',
+    payload: { action: 'saveEmployee', token: adminToken, employee: { row: 0, name, dept, category } },
+    onSuccess: () => {
+      document.getElementById('newEmpName').value = '';
+      document.getElementById('newEmpDept').value = '';
+      document.getElementById('newEmpCategory').value = '';
+      refreshEmployeesCache();
+    }
   });
 });
 
@@ -1465,9 +2098,12 @@ let lastUnregisteredRows = []; // 目前部門篩選後的結果
 function renderUnregisteredView() {
   const employees = adminCache.employees || [];
   const regs = adminCache.registrations || [];
-  document.getElementById('empPaste').value = employees.map(e => e.name + ',' + e.dept).join('\n');
-  const registeredNames = new Set(regs.filter(r => r.identity === '本人').map(r => r.name));
-  allUnregisteredRows = employees.filter(e => !registeredNames.has(e.name));
+  document.getElementById('empPaste').value = employees.map(e => e.name + ',' + e.dept + (e.category ? ',' + e.category : '')).join('\n');
+  // 未報名判斷必須用「姓名＋部門」，避免同名員工互相誤判；歸類是獨立欄位，不參與此判斷
+  const registeredKeys = new Set(
+    regs.filter(r => r.identity === '本人').map(r => String(r.name || '').trim() + '||' + String(r.dept || '').trim())
+  );
+  allUnregisteredRows = employees.filter(e => !registeredKeys.has(e.name + '||' + e.dept));
 
   // 部門清單從目前員工名單動態產生，不寫死
   const sel = document.getElementById('unregDeptFilter');
@@ -1501,10 +2137,17 @@ function renderUnregisteredList() {
       </div>`).join('')}`;
 }
 document.getElementById('saveEmpBtn').addEventListener('click', () => {
-  callApi({ action: 'saveEmployees', token: adminToken, text: document.getElementById('empPaste').value }).then(res => {
-    adminCache.employees = res.employees || [];
-    persistAdminCache();
-    renderCurrentAdminView();
+  runMutation({
+    button: document.getElementById('saveEmpBtn'),
+    msgEl: document.getElementById('saveEmpMsg'),
+    busyText: '儲存中...', doneText: '✓ 已儲存完畢',
+    payload: { action: 'saveEmployees', token: adminToken, text: document.getElementById('empPaste').value },
+    onSuccess: (res) => {
+      adminCache.employees = res.employees || [];
+      adminCache.categories = res.categories || adminCache.categories;
+      persistAdminCache();
+      renderCurrentAdminView();
+    }
   });
 });
 
@@ -1550,10 +2193,22 @@ document.getElementById('downloadUnregCsvBtn').addEventListener('click', () => {
 // ---- 健檢項目照片 ----
 function loadItemsAdmin() { renderItemsAdmin(adminCache.items || []); }
 function refreshItemsCache() {
-  return callApi({ action: 'getItems' }).then(res => {
-    adminCache.items = res.items || [];
-    persistAdminCache();
-    if (currentAdminView === 'items') renderItemsAdmin(adminCache.items);
+  adminLoadState.items = 'loading'; adminLoadError.items = '';
+  return callApiRead({ action: 'getItems' }).then(res => {
+    // 失敗時不要把已經拿到的清單蓋成空陣列，否則畫面會假裝「一張照片都沒有」
+    if (res && res.items) {
+      adminCache.items = res.items;
+      adminLoadState.items = 'ok';
+      persistAdminCache();
+    } else {
+      adminLoadState.items = 'error';
+      adminLoadError.items = (res && res.message) ? res.message : '載入失敗';
+    }
+    renderCurrentAdminView();
+  }).catch(() => {
+    adminLoadState.items = 'error';
+    adminLoadError.items = '連線失敗，請稍後再試一次';
+    renderCurrentAdminView();
   });
 }
 function renderItemsAdmin(items) {
@@ -1573,12 +2228,17 @@ function renderItemsAdmin(items) {
         </label>
         <button class="btn danger small delItemBtn" data-id="${escapeHtml(i.id)}" style="width:100%;">刪除</button>
       </div>
-    </div>`).join('')}</div>`;
+    </div>`).join('')}</div><div id="itemsListMsg"></div>`;
 
   wrap.querySelectorAll('.delItemBtn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('確定要刪除這張照片嗎？')) return;
-      callApi({ action: 'deleteItem', token: adminToken, id: btn.dataset.id }).then(() => { refreshItemsCache(); loadItemsAsync(); });
+      runMutation({
+        button: btn, msgEl: document.getElementById('itemsListMsg'),
+        confirmText: '確定要刪除嗎？（這張健檢項目照片）',
+        busyText: '刪除中...', doneText: '✓ 已刪除',
+        payload: { action: 'deleteItem', token: adminToken, id: btn.dataset.id },
+        onSuccess: () => { refreshItemsCache(); loadItemsAsync(); }
+      });
     });
   });
   wrap.querySelectorAll('.moveItemBtn').forEach(btn => {
@@ -1588,8 +2248,12 @@ function renderItemsAdmin(items) {
       const swapWith = btn.dataset.dir === 'up' ? idx - 1 : idx + 1;
       if (swapWith < 0 || swapWith >= ids.length) return;
       [ids[idx], ids[swapWith]] = [ids[swapWith], ids[idx]];
-      btn.disabled = true;
-      callApi({ action: 'reorderItems', token: adminToken, ids }).then(() => { refreshItemsCache(); loadItemsAsync(); });
+      runMutation({
+        button: btn, msgEl: document.getElementById('itemsListMsg'),
+        busyText: '儲存中...', doneText: '✓ 修改已儲存',
+        payload: { action: 'reorderItems', token: adminToken, ids },
+        onSuccess: () => { refreshItemsCache(); loadItemsAsync(); }
+      });
     });
   });
   wrap.querySelectorAll('.replaceItemInput').forEach(input => {
@@ -1597,13 +2261,26 @@ function renderItemsAdmin(items) {
       const file = input.files[0];
       if (!file) return;
       const id = input.dataset.id;
+      const msgEl = document.getElementById('itemsListMsg');
+      // 不動 label 的內容（裡面包著這個 file input），只用訊息區顯示進度
+      input.disabled = true;
+      showMsg(msgEl, true, '上傳中...');
       try {
         const base64 = await fileToBase64(file);
         const uploadRes = await callApi({ action: 'uploadItemImage', token: adminToken, base64, filename: file.name, mimeType: file.type });
-        await callApi({ action: 'replaceItemImage', token: adminToken, id, imageUrl: uploadRes.url });
+        if (!uploadRes || !uploadRes.success || !uploadRes.url) {
+          throw new Error((uploadRes && uploadRes.message) || '圖片上傳失敗');
+        }
+        const res = await callApi({ action: 'replaceItemImage', token: adminToken, id, imageUrl: uploadRes.url });
+        if (!res || !res.success) throw new Error((res && res.message) || '更換圖片失敗');
+        // 後端成功之後才刷新畫面
+        input.disabled = false;
         refreshItemsCache(); loadItemsAsync();
+        showMsg(msgEl, true, '✓ 修改已儲存');
       } catch (e) {
-        alert('更換圖片失敗，請再試一次');
+        input.disabled = false;
+        input.value = '';
+        showMsg(msgEl, false, e && e.message ? e.message : '更換圖片失敗，請再試一次');
       }
     });
   });
@@ -1621,7 +2298,11 @@ function fileToBase64(file) {
 async function uploadOneItem(file) {
   const base64 = await fileToBase64(file);
   const uploadRes = await callApi({ action: 'uploadItemImage', token: adminToken, base64, filename: file.name, mimeType: file.type });
-  await callApi({ action: 'saveItem', token: adminToken, item: { imageUrl: uploadRes.url } });
+  if (!uploadRes || !uploadRes.success || !uploadRes.url) {
+    throw new Error((uploadRes && uploadRes.message) || '圖片上傳失敗');
+  }
+  const saveRes = await callApi({ action: 'saveItem', token: adminToken, item: { imageUrl: uploadRes.url } });
+  if (!saveRes || !saveRes.success) throw new Error((saveRes && saveRes.message) || '寫入失敗');
 }
 
 document.getElementById('uploadItemsBtn').addEventListener('click', async () => {
@@ -1654,7 +2335,7 @@ document.getElementById('uploadItemsBtn').addEventListener('click', async () => 
 
   msg.innerHTML = failed > 0
     ? `<div class="msg err">完成，成功 ${done} 張，失敗 ${failed} 張，可重新選取失敗的照片再試一次</div>`
-    : `<div class="msg ok">已完成，共上傳 ${done} 張照片</div>`;
+    : `<div class="msg ok">✓ 已新增，共上傳 ${done} 張照片</div>`;
   btn.disabled = false;
   fileInput.value = '';
   refreshItemsCache(); loadItemsAsync();
@@ -1663,10 +2344,21 @@ document.getElementById('uploadItemsBtn').addEventListener('click', async () => 
 // ---- 自費項目設定 ----
 function loadSelfPayAdmin() { renderSelfPayAdmin(adminCache.selfPayItems || []); }
 function refreshSelfPayCache() {
-  return callApi({ action: 'selfPayItems' }).then(res => {
-    adminCache.selfPayItems = res.items || [];
-    persistAdminCache();
-    if (currentAdminView === 'selfpay') renderSelfPayAdmin(adminCache.selfPayItems);
+  adminLoadState.selfPay = 'loading'; adminLoadError.selfPay = '';
+  return callApiRead({ action: 'selfPayItems' }).then(res => {
+    if (res && res.items) {
+      adminCache.selfPayItems = res.items;
+      adminLoadState.selfPay = 'ok';
+      persistAdminCache();
+    } else {
+      adminLoadState.selfPay = 'error';
+      adminLoadError.selfPay = (res && res.message) ? res.message : '載入失敗';
+    }
+    renderCurrentAdminView();
+  }).catch(() => {
+    adminLoadState.selfPay = 'error';
+    adminLoadError.selfPay = '連線失敗，請稍後再試一次';
+    renderCurrentAdminView();
   });
 }
 function renderSelfPayAdmin(items) {
@@ -1676,11 +2368,16 @@ function renderSelfPayAdmin(items) {
     <div class="settings-row">
       <span class="grow">${escapeHtml(i.name)}　NT$${escapeHtml(String(i.price))}</span>
       <button class="btn danger small delSelfPayBtn" data-id="${escapeHtml(i.id)}">刪除</button>
-    </div>`).join('');
+    </div>`).join('') + '<div id="selfPayListMsg"></div>';
   wrap.querySelectorAll('.delSelfPayBtn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('確定要刪除這個自費項目嗎？')) return;
-      callApi({ action: 'deleteSelfPayItem', token: adminToken, id: btn.dataset.id }).then(() => refreshSelfPayCache());
+      runMutation({
+        button: btn, msgEl: document.getElementById('selfPayListMsg'),
+        confirmText: '確定要刪除嗎？（這個自費項目）',
+        busyText: '刪除中...', doneText: '✓ 已刪除',
+        payload: { action: 'deleteSelfPayItem', token: adminToken, id: btn.dataset.id },
+        onSuccess: () => refreshSelfPayCache()
+      });
     });
   });
 }
@@ -1688,12 +2385,16 @@ document.getElementById('addSelfPayBtn').addEventListener('click', () => {
   const name = document.getElementById('selfPayName').value.trim();
   const price = document.getElementById('selfPayPrice').value;
   const msg = document.getElementById('selfPayMsg');
-  if (!name) { msg.innerHTML = '<div class="msg err">請輸入項目名稱</div>'; return; }
-  callApi({ action: 'saveSelfPayItem', token: adminToken, item: { name, price } }).then(res => {
-    msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message||'已新增')}</div>`;
-    document.getElementById('selfPayName').value = '';
-    document.getElementById('selfPayPrice').value = '';
-    refreshSelfPayCache();
+  if (!name) { showMsg(msg, false, '請輸入項目名稱'); return; }
+  runMutation({
+    button: document.getElementById('addSelfPayBtn'), msgEl: msg,
+    busyText: '儲存中...', doneText: '✓ 已新增',
+    payload: { action: 'saveSelfPayItem', token: adminToken, item: { name, price } },
+    onSuccess: () => {
+      document.getElementById('selfPayName').value = '';
+      document.getElementById('selfPayPrice').value = '';
+      refreshSelfPayCache();
+    }
   });
 });
 
@@ -1701,32 +2402,38 @@ document.getElementById('addSelfPayBtn').addEventListener('click', () => {
 document.getElementById('archiveBtn').addEventListener('click', () => {
   const batchName = document.getElementById('archiveBatchName').value.trim();
   const msg = document.getElementById('archiveMsg');
-  if (!batchName) { msg.innerHTML = '<div class="msg err">請輸入梯次名稱</div>'; return; }
-  if (!confirm(`確定要把目前的名冊封存為「${batchName}」嗎？\n封存後目前的報名資料會被清空，改為可在「歷史紀錄」查閱，此動作無法復原。`)) return;
-  callApi({ action: 'archiveRoster', token: adminToken, batchName }).then(res => {
-    if (res.success) {
-      msg.innerHTML = `<div class="msg ok">${escapeHtml(res.message)}</div>`;
+  if (!batchName) { showMsg(msg, false, '請輸入梯次名稱'); return; }
+  runMutation({
+    button: document.getElementById('archiveBtn'), msgEl: msg,
+    confirmText: `確定要刪除嗎？此動作會把目前的名冊封存為「${batchName}」並清空目前報名資料，無法復原。`,
+    busyText: '封存中...', doneText: '✓ 已儲存完畢',
+    payload: { action: 'archiveRoster', token: adminToken, batchName },
+    onSuccess: () => {
       document.getElementById('archiveBatchName').value = '';
-      adminCache.registrations = [];
-      persistAdminCache();
-      callApi({ action: 'historyBatches', token: adminToken }).then(hres => {
-        adminCache.historyBatches = hres.batches || [];
-        persistAdminCache();
-        renderCurrentAdminView();
-      });
+      // 封存成功後才重新向後端取整包資料（名冊會歸零、歷史梯次會多一筆）
+      refreshAdminCore(); refreshHistoryBatchesCache();
       loadAvailability({ forceRefresh: true });
-    } else {
-      msg.innerHTML = `<div class="msg err">${escapeHtml(res.message||'封存失敗')}</div>`;
     }
   });
 });
 
 function loadHistoryBatches() { renderHistoryBatches(adminCache.historyBatches || []); }
 function refreshHistoryBatchesCache() {
-  return callApi({ action: 'historyBatches', token: adminToken }).then(res => {
-    adminCache.historyBatches = res.batches || [];
-    persistAdminCache();
-    if (currentAdminView === 'history') renderHistoryBatches(adminCache.historyBatches);
+  adminLoadState.history = 'loading'; adminLoadError.history = '';
+  return callApiRead({ action: 'historyBatches', token: adminToken }).then(res => {
+    if (res && res.success) {
+      adminCache.historyBatches = res.batches || [];
+      adminLoadState.history = 'ok';
+      persistAdminCache();
+    } else {
+      adminLoadState.history = 'error';
+      adminLoadError.history = (res && res.message) ? res.message : '載入失敗';
+    }
+    renderCurrentAdminView();
+  }).catch(() => {
+    adminLoadState.history = 'error';
+    adminLoadError.history = '連線失敗，請稍後再試一次';
+    renderCurrentAdminView();
   });
 }
 function renderHistoryBatches(batches) {
@@ -1738,13 +2445,18 @@ function renderHistoryBatches(batches) {
       <button class="btn ghost small viewHistoryBtn" data-batch="${escapeHtml(b.batch)}">查看</button>
       <button class="btn small exportHistoryBtn" data-batch="${escapeHtml(b.batch)}">匯出 Excel</button>
       <button class="btn danger small deleteBatchBtn" data-batch="${escapeHtml(b.batch)}">刪除</button>
-    </div>`).join('');
+    </div>`).join('') + '<div id="historyBatchMsg"></div>';
   wrap.querySelectorAll('.deleteBatchBtn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm(`確定要刪除此筆歷史紀錄嗎？刪除後無法復原。\n（將刪除「${btn.dataset.batch}」整個梯次，全部資料都會一併移除）`)) return;
-      callApi({ action: 'deleteHistoryBatch', token: adminToken, batch: btn.dataset.batch }).then(res => {
-        if (res.success) { refreshHistoryBatchesCache(); document.getElementById('historyRosterWrap').innerHTML = ''; }
-        else alert(res.message || '刪除失敗');
+      runMutation({
+        button: btn, msgEl: document.getElementById('historyBatchMsg'),
+        confirmText: `確定要刪除嗎？（「${btn.dataset.batch}」整個梯次的全部資料，刪除後無法復原）`,
+        busyText: '刪除中...', doneText: '✓ 已刪除',
+        payload: { action: 'deleteHistoryBatch', token: adminToken, batch: btn.dataset.batch },
+        onSuccess: () => {
+          refreshHistoryBatchesCache();
+          document.getElementById('historyRosterWrap').innerHTML = '';
+        }
       });
     });
   });
@@ -1753,9 +2465,16 @@ function renderHistoryBatches(batches) {
   });
   wrap.querySelectorAll('.exportHistoryBtn').forEach(btn => {
     btn.addEventListener('click', () => {
+      const original = setBtnBusy(btn, '產生中...');
       callApi({ action: 'historyRoster', token: adminToken, batch: btn.dataset.batch }).then(res => {
-        exportRowsToFile(res.rows || [], btn.dataset.batch);
-      });
+        // 先確認後端真的成功，避免 session 逾時時匯出一個只有標題列的空檔案
+        if (!res || !res.success) {
+          restoreBtn(btn, original);
+          alert((res && res.message) || '取得歷史資料失敗，請稍後再試一次');
+          return;
+        }
+        return exportRowsToFile(res.rows || [], btn.dataset.batch).then(() => restoreBtn(btn, original));
+      }).catch(() => { restoreBtn(btn, original); alert('匯出失敗，請稍後再試一次'); });
     });
   });
 }
@@ -1768,22 +2487,280 @@ function loadHistoryRoster(batch) {
       <table><thead><tr><th>姓名</th><th>身份</th><th>部門</th><th>日期</th><th>方案</th><th>自費項目</th><th>操作</th></tr></thead>
       <tbody>${rows.map((r,idx) => `<tr>
         <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity)}</td><td>${escapeHtml(r.dept)}</td>
-        <td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.plan||'—')}</td>
+        <td>${escapeHtml(formatDateForDisplay(r))}</td><td>${escapeHtml(r.plan||'—')}</td>
         <td style="max-width:160px;font-size:12px;">${escapeHtml(r.selfPay||'—')}</td>
         <td><button class="btn danger small deleteHistoryEntryBtn" data-idx="${idx}">刪除</button></td>
-      </tr>`).join('')}</tbody></table>`;
+      </tr>`).join('')}</tbody></table><div id="historyEntryMsg"></div>`;
     wrap.querySelectorAll('.deleteHistoryEntryBtn').forEach(btn => {
       btn.addEventListener('click', () => {
         const r = rows[btn.dataset.idx];
-        if (!confirm('確定要刪除此筆歷史紀錄嗎？刪除後無法復原。')) return;
-        callApi({ action: 'deleteHistoryEntry', token: adminToken, batch: r.batch, timestamp: r.timestamp, idNumber: r.idNumber }).then(res2 => {
-          if (res2.success) { loadHistoryRoster(batch); refreshHistoryBatchesCache(); }
-          else alert(res2.message || '刪除失敗');
+        runMutation({
+          button: btn, msgEl: document.getElementById('historyEntryMsg'),
+          confirmText: `確定要刪除嗎？（${r.name} 的這筆歷史紀錄，刪除後無法復原）`,
+          busyText: '刪除中...', doneText: '✓ 已刪除',
+          payload: { action: 'deleteHistoryEntry', token: adminToken, batch: r.batch, timestamp: r.timestamp, idNumber: r.idNumber },
+          onSuccess: () => { loadHistoryRoster(batch); refreshHistoryBatchesCache(); }
         });
       });
     });
   });
 }
+
+// ================= 輸出健檢時程表（依工作區 Excel 範本版型） =================
+// 版型來自範本；「目前真正的日期」一律來自後端「設定」工作表，日期欄數量動態，
+// 不硬編碼範本內的 113 年／2024 年日期。
+const SCHEDULE_MARK = 'V';                    // 日期欄／方案欄的登記標記，會被 SUBTOTAL(3,…) 計數
+const UNCATEGORIZED_TITLE = '未歸類（員工名單查無歸類，請於「員工管理」設定後重新輸出）';
+const OTHER_DATE_BLOCK_TITLE = '其他日期／待人工確認';
+const DEPENDENT_BLOCK_TITLE = '員工眷屬自費檢查登記';
+const SELFPAY_PRICE_MISSING = '查無目前價格';
+
+// 「設定」的場次是顯示字串（例如 11/9（一）），拆成日期字樣與星期，不自行補上年份
+function splitConfigDate(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  const m = s.match(/^(.*?)\s*[（(]\s*([日一二三四五六])\s*[)）]\s*$/);
+  if (m) return { label: m[1].trim(), weekday: m[2] };
+  return { label: s, weekday: '' };
+}
+
+// X 欄：素食與自費加選必須同時保留，不可互相覆蓋
+function xColumnText(r) {
+  const parts = [];
+  if (r.breakfast === '素食') parts.push('素食');
+  if (r.selfPayNames && r.selfPayNames.length) parts.push(r.selfPayNames.join('、'));
+  return parts.join('；');
+}
+
+function buildScheduleWorkbook(data) {
+  const dates = data.dates || [];
+  const nDate = dates.length;
+  const regs = data.registrations || [];
+  const catByEmp = data.categoryByEmployee || {};
+  const cats = data.categories || [];
+  const taxIds = data.taxIds || {};
+  const rocYear = data.rocYear;
+  const parsed = dates.map(d => splitConfigDate(d.date));
+
+  // 欄位配置（與範本相同的相對位置，日期欄數量由設定決定）
+  const COL_A = 0, COL_B = 1, COL_C = 2;
+  const FIRST_DATE = 3;
+  const COL_PLAN_A = FIRST_DATE + nDate;   // 範本的 V 欄
+  const COL_PLAN_B = COL_PLAN_A + 1;       // 範本的 W 欄
+  const COL_X = COL_PLAN_B + 1;            // 範本的 X 欄（素食/加選項目）
+  const COL_Y = COL_X + 1;                 // 範本的 Y 欄（手機號碼）
+  const COL_OTHER = COL_Y + 1;             // 追加：其他日期
+  const COL_STATUS = COL_OTHER + 1;        // 追加：狀態
+  const COL_CAT = COL_STATUS + 1;          // 追加：歸類（僅其他日期區使用）
+  const TOTAL = COL_CAT + 1;
+
+  const aoa = [], rowMeta = [], merges = [], phoneCells = [], formulaCells = [];
+
+  function addRow(map, hpt) {
+    const row = new Array(TOTAL).fill('');
+    Object.keys(map || {}).forEach(k => { row[Number(k)] = map[k]; });
+    aoa.push(row);
+    rowMeta.push({ hpt: hpt || 34.5 });
+    return aoa.length - 1;
+  }
+  function dateHeaderMap() { const m = {}; parsed.forEach((d, i) => { m[FIRST_DATE + i] = d.label; }); return m; }
+  function weekdayMap() { const m = {}; parsed.forEach((d, i) => { m[FIRST_DATE + i] = d.weekday; }); return m; }
+  function subtotal(r, c, first, last) {
+    const col = XLSX.utils.encode_col(c);
+    formulaCells.push({ r, c, f: `SUBTOTAL(3,${col}${first + 1}:${col}${last + 1})` });
+  }
+
+  // 三個區塊依實際用途分區，不再硬共用同一份欄位版型。
+  // 未列入的欄位完全不寫表頭、不寫資料、不畫合併、不產生公式。
+  const BLOCK_LAYOUT = {
+    // 上方三家公司區：只放正式場次需要的欄位
+    company:   { dateCols: true,  otherCols: false, category: false, countRow: true,  headerA: '姓名/星期' },
+    // 其他日期本人區：簡潔待確認清單，沒有正式日期欄，也沒有無意義的當日人數
+    otherDate: { dateCols: false, otherCols: true,  category: true,  countRow: false, headerA: '姓名' },
+    // 眷屬區：正式日期眷屬要打 V，其他日期眷屬要顯示日期與狀態；不顯示歸類
+    dependent: { dateCols: true,  otherCols: true,  category: false, countRow: true,  headerA: '星期' }
+  };
+
+  // 一個區塊 = 區塊標題 + 雙層表頭 + 資料列 +（視版型）當日人數
+  function addBlock(title, people, layout) {
+    if (title) addRow({ [COL_A]: title });
+
+    const h1map = {
+      [COL_A]: '日期', [COL_B]: '身份證字號', [COL_C]: '出生日期',
+      [COL_PLAN_A]: '二選一', [COL_X]: '素食/加選項目', [COL_Y]: '手機號碼'
+    };
+    const h2map = {
+      [COL_A]: layout.headerA,
+      [COL_PLAN_A]: 'A案\n骨質密度', [COL_PLAN_B]: 'B案\n甲狀腺超音波'
+    };
+    if (layout.dateCols) { Object.assign(h1map, dateHeaderMap()); Object.assign(h2map, weekdayMap()); }
+    if (layout.otherCols) { h1map[COL_OTHER] = '其他日期'; h1map[COL_STATUS] = '狀態'; }
+    if (layout.category) h1map[COL_CAT] = '歸類';
+    const h1 = addRow(h1map);
+    const h2 = addRow(h2map, 48);
+
+    // 與範本相同的合併：B/C/X/Y 跨兩列，二選一橫跨 A案+B案。
+    // 只在這個區塊實際輸出表頭的欄位上畫合併，避免對空白欄產生合併框。
+    const twoRowMergeCols = [COL_B, COL_C, COL_X, COL_Y];
+    if (layout.otherCols) twoRowMergeCols.push(COL_OTHER, COL_STATUS);
+    if (layout.category) twoRowMergeCols.push(COL_CAT);
+    twoRowMergeCols.forEach(c => { merges.push({ s: { r: h1, c }, e: { r: h2, c } }); });
+    merges.push({ s: { r: h1, c: COL_PLAN_A }, e: { r: h1, c: COL_PLAN_B } });
+
+    const firstData = aoa.length;
+    people.forEach(p => {
+      const map = {
+        [COL_A]: p.name, [COL_B]: p.idNumber, [COL_C]: p.birthDate,
+        [COL_X]: xColumnText(p), [COL_Y]: p.phone
+      };
+      if (p.date === OTHER_DATE_LABEL) {
+        // 其他日期不塞進任何正式日期欄
+        if (layout.otherCols) {
+          map[COL_OTHER] = p.otherDate || '';
+          map[COL_STATUS] = p.otherDateStatus || '待人工確認';
+        }
+      } else if (layout.dateCols) {
+        const di = dates.findIndex(d => d.date === p.date);
+        if (di >= 0) map[FIRST_DATE + di] = SCHEDULE_MARK;
+      }
+      // 版型與判斷規則完全不變：只認「A案」「B案」兩個值，不新增任何 A/B 規則、不自動推測。
+      // 差別只在於把無法辨識的值記下來，輸出後提醒管理者（原本是靜默略過）。
+      if (p.plan === 'A案') map[COL_PLAN_A] = SCHEDULE_MARK;
+      else if (p.plan === 'B案') map[COL_PLAN_B] = SCHEDULE_MARK;
+      else unknownPlans.push({ name: p.name, plan: p.plan || '' });
+      if (layout.category) map[COL_CAT] = p.__category || '未歸類';
+      const r = addRow(map);
+      phoneCells.push({ r, c: COL_Y });
+    });
+
+    if (people.length === 0) {
+      addRow({ [COL_A]: '（目前沒有資料）' });
+    } else if (layout.countRow) {
+      const last = aoa.length - 1;
+      const countRow = addRow({ [COL_A]: '當日人數' }, 36);
+      if (layout.dateCols) {
+        for (let i = 0; i < nDate; i++) subtotal(countRow, FIRST_DATE + i, firstData, last);
+      }
+      subtotal(countRow, COL_PLAN_A, firstData, last);
+      subtotal(countRow, COL_PLAN_B, firstData, last);
+    }
+    addRow({});
+  }
+
+  // ---- 分流：上方三家公司只放本人；所有眷屬一律在最底部眷屬區 ----
+  const mains = regs.filter(r => r.identity === '本人');
+  const deps = regs.filter(r => r.identity !== '本人'); // 含正式日期與其他日期的眷屬
+  const byCategory = {};
+  cats.forEach(c => { byCategory[c] = []; });
+  const uncategorized = [], otherDateMains = [];
+  // 收集「方案」欄不是 A案／B案 的人（含空白），只用於輸出後提醒，不影響版型也不改資料。
+  // 宣告位置在所有 addBlock() 呼叫之前，addBlock 內的 closure 讀得到。
+  const unknownPlans = [];
+
+  mains.forEach(p => {
+    const cat = catByEmp[p.name + '||' + p.dept] || ''; // 只認員工名單 C 欄，找不到就是找不到
+    if (p.date === OTHER_DATE_LABEL) { otherDateMains.push(Object.assign({ __category: cat }, p)); return; }
+    if (cat && byCategory[cat]) byCategory[cat].push(p); else uncategorized.push(p);
+  });
+
+  addRow({ [COL_A]: rocYear + '年員工健檢時程表' });
+  addRow({});
+  cats.forEach(c => {
+    addBlock('(' + c + ') 統編' + (taxIds[c] || ''), byCategory[c] || [], BLOCK_LAYOUT.company);
+  });
+  if (uncategorized.length > 0) addBlock(UNCATEGORIZED_TITLE, uncategorized, BLOCK_LAYOUT.company);
+  if (otherDateMains.length > 0) addBlock(OTHER_DATE_BLOCK_TITLE, otherDateMains, BLOCK_LAYOUT.otherDate);
+  addBlock(DEPENDENT_BLOCK_TITLE, deps, BLOCK_LAYOUT.dependent);
+
+  // 自我檢查（產生檔案前先攔截，寧可報錯也不要輸出壞掉的 xlsx）
+  aoa.forEach((r, i) => {
+    if (r.length !== TOTAL) throw new Error('第 ' + (i + 1) + ' 列欄數為 ' + r.length + '，與總欄數 ' + TOTAL + ' 不符');
+  });
+  merges.forEach(m => {
+    // 合併的左上角一定要是實際輸出的表頭；落在空白欄代表版型組裝有誤
+    const v = aoa[m.s.r][m.s.c];
+    if (v === '' || v == null) {
+      throw new Error('合併儲存格落在未輸出表頭的欄位：' + XLSX.utils.encode_cell(m.s));
+    }
+  });
+
+  const ws1 = XLSX.utils.aoa_to_sheet(aoa);
+  ws1['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: TOTAL - 1 } });
+  ws1['!merges'] = merges;
+  ws1['!rows'] = rowMeta;
+  const cols = [{ wch: 17 }, { wch: 19.25 }, { wch: 17 }];
+  for (let i = 0; i < nDate + 2; i++) cols.push({ wch: 9 });  // 日期欄 + A案/B案
+  cols.push({ wch: 42.375 }, { wch: 28.75 }, { wch: 16 }, { wch: 14 }, { wch: 26 });
+  if (cols.length !== TOTAL) throw new Error('欄寬設定 ' + cols.length + ' 欄與總欄數 ' + TOTAL + ' 不一致');
+  ws1['!cols'] = cols;
+  formulaCells.forEach(fc => {
+    ws1[XLSX.utils.encode_cell({ r: fc.r, c: fc.c })] = { t: 'n', f: fc.f, v: 0 };
+  });
+  phoneCells.forEach(pc => {
+    const ref = XLSX.utils.encode_cell({ r: pc.r, c: pc.c });
+    if (ws1[ref]) { ws1[ref].t = 's'; ws1[ref].z = '@'; } // 手機保留前導 0
+  });
+
+  // ---- 第二張：自費金額（價格一律用 CURRENT 自費項目工作表的價格） ----
+  const prices = data.selfPayPrices || {};
+  const missing = [];
+  const aoa2 = [[], [rocYear + '年度-健檢自費項目負擔金額'], [], ['姓名', '檢查項目', '自費金額']];
+  regs.forEach(r => {
+    (r.selfPayNames || []).forEach(nm => {
+      const has = Object.prototype.hasOwnProperty.call(prices, nm);
+      if (!has && missing.indexOf(nm) === -1) missing.push(nm);
+      aoa2.push([r.name, nm, has ? prices[nm] : SELFPAY_PRICE_MISSING]);
+    });
+  });
+  const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+  ws2['!cols'] = [{ wch: 14.875 }, { wch: 18.875 }, { wch: 12 }];
+  ws2['!rows'] = aoa2.map((_, i) => (i === 3 ? { hpt: 27.6 } : { hpt: 15 }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws1, '健檢時程表');
+  XLSX.utils.book_append_sheet(wb, ws2, '自費金額');
+  XLSX.writeFile(wb, `健檢時程表_${rocYear}年.xlsx`);
+
+  return { uncategorized: uncategorized.length, missingPrices: missing, unknownPlans: unknownPlans };
+}
+
+document.getElementById('exportScheduleBtn').addEventListener('click', () => {
+  const btn = document.getElementById('exportScheduleBtn');
+  const original = setBtnBusy(btn, '產生中...');
+  // 一律向後端重新取最新資料，不使用任何前端 cache
+  callApi({ action: 'scheduleExportData', token: adminToken }).then(data => {
+    if (!data || !data.success) {
+      restoreBtn(btn, original);
+      alert((data && data.message) || '取得資料失敗，請稍後再試一次');
+      return;
+    }
+    // SheetJS 按需載入；時程表沒有 CSV 備援版型，所以載不到就明確告知，不產生半成品
+    return ensureXlsxLoaded().then(() => {
+      restoreBtn(btn, original);
+      try {
+        const info = buildScheduleWorkbook(data);
+        const warn = [];
+        if (info.uncategorized > 0) warn.push(`有 ${info.uncategorized} 位本人在員工名單查不到歸類，已放在「未歸類」區塊，請到「員工管理」設定歸類後重新輸出。`);
+        if (info.missingPrices.length > 0) warn.push(`以下自費項目在目前的「自費項目」清單找不到價格，金額欄已標示「${SELFPAY_PRICE_MISSING}」而不是自行填價：${info.missingPrices.join('、')}`);
+        // A/B 方案診斷：時程表只認得「A案」「B案」兩個值，其餘一律不打勾且不會報錯。
+        // 這裡把無法辨識的人列出來，讓管理者知道有資料需要人工確認，不自動猜測也不自動修正。
+        if (info.unknownPlans.length > 0) {
+          warn.push(`以下人員的「方案」欄不是「A案」或「B案」，時程表的 A案／B案 兩欄都不會打勾，` +
+            `當日人數統計也不會計入，請到「名冊」確認後修正：\n` +
+            info.unknownPlans.map(p => `・${p.name}：「${p.plan || '（空白）'}」`).join('\n'));
+        }
+        if (warn.length > 0) alert(warn.join('\n\n'));
+      } catch (e) {
+        alert('產生健檢時程表失敗：' + (e && e.message ? e.message : e));
+      }
+    }, (e) => {
+      restoreBtn(btn, original);
+      alert((e && e.message) || 'Excel 函式庫載入失敗，請確認網路後再試一次');
+    });
+  }).catch(() => {
+    restoreBtn(btn, original);
+    alert('連線失敗，請稍後再試一次');
+  });
+});
 
 loadAvailability();
 loadItemsAsync();
