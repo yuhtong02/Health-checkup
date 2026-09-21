@@ -2515,6 +2515,18 @@ const OTHER_DATE_BLOCK_TITLE = '其他日期／待人工確認';
 const DEPENDENT_BLOCK_TITLE = '員工眷屬自費檢查登記';
 const SELFPAY_PRICE_MISSING = '查無目前價格';
 
+// 各公司區塊的「最低人員資料列數」——沿用公司原始 Excel 的留白配置。
+// 報名人數少於這個數字時，用空白列把區塊補到固定高度；人數超過時依實際人數自動擴充。
+// key 必須與「員工名單」C 欄的歸類值（後端 CATEGORY_OPTIONS）完全相同；
+// 查不到 key 的區塊（例如未歸類區）不預留空白列，依實際人數輸出。
+const COMPANY_MIN_DATA_ROWS = {
+  '鈺通營造工程股份有限公司': 8,
+  '李明吉建築師事務所': 5,
+  '吳明翰建築師事務所': 5
+};
+// 眷屬區同樣保留固定高度；超過 5 位時依實際人數自動擴充。
+const DEPENDENT_MIN_DATA_ROWS = 5;
+
 // 「設定」的場次是顯示字串（例如 11/9（一）），拆成日期字樣與星期，不自行補上年份
 function splitConfigDate(raw) {
   const s = String(raw == null ? '' : raw).trim();
@@ -2556,10 +2568,25 @@ function buildScheduleWorkbook(data) {
   const aoa = [], rowMeta = [], merges = [], phoneCells = [], formulaCells = [];
 
   function addRow(map, hpt) {
-    const row = new Array(TOTAL).fill('');
-    Object.keys(map || {}).forEach(k => { row[Number(k)] = map[k]; });
+    // 沒有值的欄位一律填 null，不要填空字串。
+    // XLSX.utils.aoa_to_sheet 會略過 null，檔案裡不會產生那些儲存格；
+    // 若填空字串則會產生「內容為空字串」的真實儲存格，Excel 的 COUNTA／SUBTOTAL(3,…)
+    // 會把它算成非空，造成每個日期欄的「當日人數」等於整個區塊的總人數。
+    // 原則：沒有值 = null，真正有內容 = 原值（V、姓名、手機…一律原樣保留）。
+    const row = new Array(TOTAL).fill(null);
+    Object.keys(map || {}).forEach(k => {
+      const v = map[k];
+      row[Number(k)] = (v === '' || v === undefined) ? null : v;
+    });
     aoa.push(row);
     rowMeta.push({ hpt: hpt || 34.5 });
+    return aoa.length - 1;
+  }
+  // 版面預留用的空白人員列：整列 null，不含任何文字，
+  // 也不會被 phoneCells／formulaCells 參照，確定不會被任何統計計入。
+  function addBlankDataRow() {
+    aoa.push(new Array(TOTAL).fill(null));
+    rowMeta.push({ hpt: 34.5 });
     return aoa.length - 1;
   }
   function dateHeaderMap() { const m = {}; parsed.forEach((d, i) => { m[FIRST_DATE + i] = d.label; }); return m; }
@@ -2580,8 +2607,9 @@ function buildScheduleWorkbook(data) {
     dependent: { dateCols: true,  otherCols: true,  category: false, countRow: true,  headerA: '星期' }
   };
 
-  // 一個區塊 = 區塊標題 + 雙層表頭 + 資料列 +（視版型）當日人數
-  function addBlock(title, people, layout) {
+  // 一個區塊 = 區塊標題 + 雙層表頭 + 資料列（不足時補空白預留列）+（視版型）當日人數
+  // minDataRows：該區塊要保留的最低人員資料列數，省略或 0 代表依實際人數輸出
+  function addBlock(title, people, layout, minDataRows) {
     if (title) addRow({ [COL_A]: title });
 
     const h1map = {
@@ -2632,9 +2660,16 @@ function buildScheduleWorkbook(data) {
       phoneCells.push({ r, c: COL_Y });
     });
 
-    if (people.length === 0) {
-      addRow({ [COL_A]: '（目前沒有資料）' });
-    } else if (layout.countRow) {
+    // 人數不足時補上空白預留列，讓區塊維持公司原始 Excel 的固定高度。
+    // 這些列完全空白：不產生假資料、不會被計入任何人數統計。
+    const blankRows = Math.max(0, (minDataRows || 0) - people.length);
+    for (let i = 0; i < blankRows; i++) addBlankDataRow();
+    const displayRows = people.length + blankRows;
+
+    // 不再輸出「（目前沒有資料）」之類的文字；0 人時就是一張空白表格。
+    // displayRows > 0 是必要條件：沒有任何資料列時 firstData > last，
+    // 會產生上下顛倒的 SUBTOTAL 範圍，所以這種情況不輸出當日人數列。
+    if (layout.countRow && displayRows > 0) {
       const last = aoa.length - 1;
       const countRow = addRow({ [COL_A]: '當日人數' }, 36);
       if (layout.dateCols) {
@@ -2665,11 +2700,16 @@ function buildScheduleWorkbook(data) {
   addRow({ [COL_A]: rocYear + '年員工健檢時程表' });
   addRow({});
   cats.forEach(c => {
-    addBlock('(' + c + ') 統編' + (taxIds[c] || ''), byCategory[c] || [], BLOCK_LAYOUT.company);
+    // 第四個參數：該公司的最低資料列數（鈺通 8、李明吉 5、吳明翰 5）。
+    // 分類結果 byCategory[c] 完全沿用既有邏輯，這裡只影響版面高度。
+    addBlock('(' + c + ') 統編' + (taxIds[c] || ''), byCategory[c] || [],
+             BLOCK_LAYOUT.company, COMPANY_MIN_DATA_ROWS[c] || 0);
   });
   if (uncategorized.length > 0) addBlock(UNCATEGORIZED_TITLE, uncategorized, BLOCK_LAYOUT.company);
   if (otherDateMains.length > 0) addBlock(OTHER_DATE_BLOCK_TITLE, otherDateMains, BLOCK_LAYOUT.otherDate);
-  addBlock(DEPENDENT_BLOCK_TITLE, deps, BLOCK_LAYOUT.dependent);
+  // 眷屬區保留最低 5 個資料列。當日人數沿用 BLOCK_LAYOUT.dependent 既有的
+  // countRow: true 設定，不是為了這次修改而新增的統計列。
+  addBlock(DEPENDENT_BLOCK_TITLE, deps, BLOCK_LAYOUT.dependent, DEPENDENT_MIN_DATA_ROWS);
 
   // 自我檢查（產生檔案前先攔截，寧可報錯也不要輸出壞掉的 xlsx）
   aoa.forEach((r, i) => {
