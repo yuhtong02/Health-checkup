@@ -103,6 +103,25 @@
   .unreg-row{display:grid;grid-template-columns:50px 1fr 1fr 90px;gap:8px;padding:8px 4px;align-items:center;}
   @media(max-width:520px){.unreg-row{grid-template-columns:32px 1fr 90px;}
     .unreg-row .unreg-dept{grid-column:2 / span 2;font-size:12px;color:var(--ink-soft);}}
+
+  /* ---- 手機版（320 / 375 / 390 / 430px）----
+     原則：欄位太多的寬表格，只讓「它自己的容器」左右捲動，
+     整個 body 絕對不可以橫向突出、不需要左右拖曳整頁才能操作。 */
+  html,body{max-width:100%;}
+  #empListWrap,#rosterTableWrap,#historyRosterWrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  #historyRosterWrap table{min-width:620px;}
+  /* flex/grid 子項目預設 min-width:auto，會被長字串撐開而把整頁推寬 */
+  .toolbar>*,.settings-row>*,.admin-tabs>*,.row2>*,.add-row>*{min-width:0;}
+  .settings-row .grow{min-width:0;overflow-wrap:anywhere;}
+  @media(max-width:430px){
+    .wrap{padding-left:14px;padding-right:14px;}
+    .add-row{grid-template-columns:1fr;}
+    .add-row button{width:100%;}
+    .toolbar>.btn,.toolbar>select{flex:1 1 auto;}
+    .admin-tab{padding:8px 10px;font-size:12.5px;}
+    .settings-row .grow{flex-basis:100%;}
+    .item-card img{height:110px;}
+  }
 </style>
 </head>
 <body>
@@ -136,9 +155,13 @@
         <div class="row2">
           <div class="field"><label>本人姓名</label><input id="appendSearchName" autocomplete="off"></div>
           <div class="field">
-            <label>本人生日</label>
-            <input type="date" id="appendSearchBirthDate">
-            <div class="hint">請選擇完整的出生年月日（西元年）。</div>
+            <label>本人生日（民國年）</label>
+            <div style="display:flex;gap:6px;">
+              <select id="appendSearchBYear" style="flex:1;min-width:0;"><option value="">年</option></select>
+              <select id="appendSearchBMonth" style="flex:1;min-width:0;"><option value="">月</option></select>
+              <select id="appendSearchBDay" style="flex:1;min-width:0;"><option value="">日</option></select>
+            </div>
+            <div class="hint">請輸入完整的出生年月日（民國年）。例如民國 86 年 6 月 12 日，就選 86／6／12。</div>
           </div>
         </div>
         <button class="btn ghost" id="appendSearchBtn">查詢本人報名資料</button>
@@ -288,7 +311,9 @@
         <div class="toolbar" style="margin-top:18px;">
           <select id="empCategoryFilter"><option value="">全部歸類</option></select>
           <button class="btn ghost small" id="refreshEmpBtn">重新整理</button>
+          <button class="btn small" id="saveAllEmpBtn">儲存全部</button>
         </div>
+        <div class="hint" style="margin-bottom:8px;">可以同時修改多位員工的姓名／部門／歸類，最後按一次「儲存全部」。只會送出真正有變更的資料。</div>
         <div id="empListWrap" style="overflow-x:auto;"></div>
       </div>
 
@@ -650,6 +675,18 @@ function loadItemsAsync() {
   }).catch(() => { /* 版本查詢失敗就沿用目前畫面上的快取內容，不強制整包重抓 */ });
 }
 
+// 只把本地快取的照片畫出來，完全不連線。用於首屏，讓照片不必等名額 API。
+// 之後 loadItemsAsync() 仍會照常比對 itemsVersion，必要時整包重抓，不會顯示過期照片。
+function renderCachedItemsNow_() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(ITEMS_CACHE_KEY) || 'null');
+    if (cached && (Date.now() - cached.ts) < ITEMS_CACHE_MAX_AGE) {
+      healthItems = cached.items || [];
+      renderItems();
+    }
+  } catch (e) { /* 快取壞掉就略過，等 loadItemsAsync 正常流程處理 */ }
+}
+
 function fetchFullItems_() {
   callApiRead({ action: 'getItems' }).then(res => {
     const items = (res && res.items) || [];
@@ -798,15 +835,15 @@ function addPersonCard(identity) {
     <div class="field">
       <label>出生日期（民國年） *</label>
       <div style="display:flex;gap:6px;">
-        <select id="p${id}_byear" style="width:33%;">
+        <select id="p${id}_byear" style="flex:1;min-width:0;">
           <option value="">年</option>
           ${Array.from({length:81},(_,i)=>35+i).map(y=>`<option value="${y}">${y}</option>`).join('')}
         </select>
-        <select id="p${id}_bmonth" style="width:33%;">
+        <select id="p${id}_bmonth" style="flex:1;min-width:0;">
           <option value="">月</option>
           ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join('')}
         </select>
-        <select id="p${id}_bday" style="width:34%;">
+        <select id="p${id}_bday" style="flex:1;min-width:0;">
           <option value="">日</option>
           ${Array.from({length:31},(_,i)=>i+1).map(day=>`<option value="${day}">${day}</option>`).join('')}
         </select>
@@ -900,15 +937,53 @@ let appendPersonIdCounter = 0;
 let appendPersonsState = [];
 let appendSelectedSelfPay = {};
 
+// 民國年月日 → 西元 'yyyy-mm-dd'。
+// 使用者只需要輸入自己熟悉的民國日期，換算完全由前端處理；
+// 後端 Section04 仍然收到完整西元日期並做「年＋月＋日」精確比對，安全性沒有任何下降。
+// 會做真實日曆驗證（含閏年），不存在的日期（例如 2 月 30 日）一律回 null 並由呼叫端擋下。
+function rocToAdDateString(rocYear, month, day) {
+  const ry = Number(rocYear), mo = Number(month), da = Number(day);
+  if (!ry || !mo || !da) return null;
+  if (ry < 1 || ry > 200) return null;          // 合理的民國年範圍
+  const ad = ry + 1911;
+  const leap = (ad % 4 === 0 && ad % 100 !== 0) || ad % 400 === 0;
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (mo < 1 || mo > 12) return null;
+  if (da < 1 || da > daysInMonth[mo - 1]) return null;
+  const p2 = n => (n < 10 ? '0' : '') + n;
+  return ad + '-' + p2(mo) + '-' + p2(da);
+}
+
+// 民國年／月／日三個下拉（與 03 報名表單相同的做法，手機上好按、不需要自己換算西元）
+(function initAppendRocBirthSelects() {
+  const y = document.getElementById('appendSearchBYear');
+  const m = document.getElementById('appendSearchBMonth');
+  const d = document.getElementById('appendSearchBDay');
+  if (!y || !m || !d) return;
+  y.innerHTML = '<option value="">年</option>' +
+    Array.from({ length: 81 }, (_, i) => 35 + i).map(v => `<option value="${v}">${v}</option>`).join('');
+  m.innerHTML = '<option value="">月</option>' +
+    Array.from({ length: 12 }, (_, i) => i + 1).map(v => `<option value="${v}">${v}</option>`).join('');
+  d.innerHTML = '<option value="">日</option>' +
+    Array.from({ length: 31 }, (_, i) => i + 1).map(v => `<option value="${v}">${v}</option>`).join('');
+})();
+
 // 查詢本人報名：只送「姓名＋完整生日」，不送也不持有任何身分證字號。
-// <input type="date"> 的 value 已經是 yyyy-mm-dd，直接原樣送給後端再正規化比對。
+// 前端把民國日期換算成西元 yyyy-mm-dd 再送出，API 參數與後端比對邏輯完全沒有改變。
 const APPEND_SEARCH_BTN_TEXT = '查詢本人報名資料';
 document.getElementById('appendSearchBtn').addEventListener('click', () => {
   const name = document.getElementById('appendSearchName').value.trim();
-  const birthDate = document.getElementById('appendSearchBirthDate').value;
+  const by = document.getElementById('appendSearchBYear').value;
+  const bm = document.getElementById('appendSearchBMonth').value;
+  const bd = document.getElementById('appendSearchBDay').value;
   const msg = document.getElementById('appendSearchMsg');
   const btn = document.getElementById('appendSearchBtn');
-  if (!name || !birthDate) { msg.innerHTML = '<div class="msg err">請輸入本人姓名與完整出生日期。</div>'; return; }
+  if (!name || !by || !bm || !bd) { msg.innerHTML = '<div class="msg err">請輸入本人姓名與完整出生日期（民國年／月／日）。</div>'; return; }
+  const birthDate = rocToAdDateString(by, bm, bd);
+  if (!birthDate) {
+    msg.innerHTML = `<div class="msg err">民國 ${escapeHtml(by)} 年 ${escapeHtml(bm)} 月 ${escapeHtml(bd)} 日 不是有效的日期，請重新選擇。</div>`;
+    return;
+  }
   msg.innerHTML = '';
   btn.disabled = true; btn.textContent = '查詢中…';
   callApi({ action: 'findRegistration', name, birthDate }).then(res => {
@@ -968,15 +1043,15 @@ function addAppendPersonCard() {
     <div class="field">
       <label>出生日期（民國年） *</label>
       <div style="display:flex;gap:6px;">
-        <select id="append_${id}_byear" style="width:33%;">
+        <select id="append_${id}_byear" style="flex:1;min-width:0;">
           <option value="">年</option>
           ${Array.from({length:81},(_,i)=>35+i).map(y=>`<option value="${y}">${y}</option>`).join('')}
         </select>
-        <select id="append_${id}_bmonth" style="width:33%;">
+        <select id="append_${id}_bmonth" style="flex:1;min-width:0;">
           <option value="">月</option>
           ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}</option>`).join('')}
         </select>
-        <select id="append_${id}_bday" style="width:34%;">
+        <select id="append_${id}_bday" style="flex:1;min-width:0;">
           <option value="">日</option>
           ${Array.from({length:31},(_,i)=>i+1).map(day=>`<option value="${day}">${day}</option>`).join('')}
         </select>
@@ -1989,6 +2064,14 @@ function categoryOptionsHtml(selected) {
 // 直接寫進 DOM 的訊息會在重畫瞬間消失，讓人誤以為「按了沒反應／沒存成功」。
 let empRowNotice = null;            // { ok, text }
 let pendingEmpSaveConfirm = null;   // { row, name } — 用伺服器回傳的資料確認實際存了什麼
+// 剛儲存過的那一列（試算表列號）。即使它因為目前的篩選條件（最常見的是「尚未設定歸類」）
+// 已經不符合，仍然要留在畫面上並標示出來。
+// 這是這個 bug 的真正原因：篩選「尚未設定歸類」時存好一筆，該列立刻被濾掉消失，
+// 下一個還沒設定的人往上遞補到同一個位置，看起來就像「剛選的歸類又變回請選擇歸類」，
+// 但其實資料已經正確寫進試算表了。
+let justSavedEmpRow = null;
+// 「儲存全部」進行中：同時擋住單筆儲存／刪除，避免兩個寫入互相覆蓋
+let empBatchInFlight = false;
 
 function renderEmployeesAdmin() {
   const cats = adminCache.categories || [];
@@ -2019,21 +2102,33 @@ function renderEmployeesAdmin() {
   filterSel.value = currentFilter;
 
   const all = adminCache.employees || [];
-  const rows = !currentFilter ? all
+  let rows = !currentFilter ? all
     : (currentFilter === '__none__' ? all.filter(e => !e.category) : all.filter(e => e.category === currentFilter));
+
+  // 把剛儲存的那一列釘住：即使它已經不符合目前的篩選條件，也要留在畫面上，
+  // 讓管理員親眼看到「伺服器存進去的值」，不會誤以為儲存失敗或跳回請選擇歸類。
+  let pinnedRow = null;
+  if (justSavedEmpRow != null && !rows.some(e => e.row === justSavedEmpRow)) {
+    pinnedRow = all.find(e => e.row === justSavedEmpRow) || null;
+    if (pinnedRow) rows = rows.concat([pinnedRow]);
+  }
 
   const wrap = document.getElementById('empListWrap');
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的員工</div><div id="empRowMsg"></div>'; return; }
   wrap.innerHTML = `<table style="min-width:780px;"><thead><tr>
       <th>姓名</th><th>部門</th><th>歸類</th><th>操作</th></tr></thead><tbody>
-    ${rows.map(e => `<tr data-row="${e.row}">
-      <td><input class="empName" value="${escapeHtml(e.name)}" style="min-width:110px;"></td>
+    ${rows.map(e => {
+      const just = (e.row === justSavedEmpRow);
+      return `<tr data-row="${e.row}"${just ? ' style="background:var(--primary-light);"' : ''}>
+      <td><input class="empName" value="${escapeHtml(e.name)}" style="min-width:110px;">${
+        just && pinnedRow ? '<div class="hint" style="color:var(--primary-dark);font-weight:700;">剛儲存（不符目前篩選，暫時保留顯示）</div>' : ''}</td>
       <td><input class="empDept" value="${escapeHtml(e.dept)}" style="min-width:110px;"></td>
       <td><select class="empCategory" style="min-width:210px;">${categoryOptionsHtml(e.category)}</select></td>
       <td style="white-space:nowrap;">
         <button class="btn small empSaveBtn">儲存</button>
         <button class="btn danger small empDeleteBtn">刪除</button>
-      </td></tr>`).join('')}
+      </td></tr>`;
+    }).join('')}
     </tbody></table><div id="empRowMsg"></div>`;
 
   // 表格重畫之後，把上一次操作的結果訊息補回去（否則會被 innerHTML 洗掉）
@@ -2045,6 +2140,7 @@ function renderEmployeesAdmin() {
     btn.addEventListener('click', () => {
       const tr = btn.closest('tr');
       const row = Number(tr.dataset.row);
+      if (empBatchInFlight) return;   // 「儲存全部」進行中，避免同時送出造成互相覆蓋
       const original = (adminCache.employees || []).find(e => e.row === row);
       if (!original) { showMsg(document.getElementById('empRowMsg'), false, '員工名單已變動，請重新整理後再試一次'); return; }
       runMutation({
@@ -2064,6 +2160,7 @@ function renderEmployeesAdmin() {
         // 是等 refreshEmployeesCache() 把伺服器最新資料抓回來後，依實際回傳值產生的。
         onSuccess: () => {
           empRowNotice = null;
+          justSavedEmpRow = row;   // 釘住這一列，避免被篩選條件濾掉而看起來像沒存成功
           pendingEmpSaveConfirm = { row: row, name: tr.querySelector('.empName').value.trim() };
           refreshEmployeesCache();
         }
@@ -2075,6 +2172,7 @@ function renderEmployeesAdmin() {
     btn.addEventListener('click', () => {
       const tr = btn.closest('tr');
       const row = Number(tr.dataset.row);
+      if (empBatchInFlight) return;   // 「儲存全部」進行中，避免同時送出
       const original = (adminCache.employees || []).find(e => e.row === row);
       if (!original) { showMsg(document.getElementById('empRowMsg'), false, '員工名單已變動，請重新整理後再試一次'); return; }
       runMutation({
@@ -2086,8 +2184,9 @@ function renderEmployeesAdmin() {
           employee: { row: row, originalName: original.name, originalDept: original.dept }
         },
         onSuccess: () => {
-          // 刪除後列號會整個位移，之前那筆儲存確認訊息已經沒有意義，先清掉
+          // 刪除後列號會整個位移，之前那筆儲存確認訊息與釘選都沒有意義，先清掉
           pendingEmpSaveConfirm = null;
+          justSavedEmpRow = null;
           empRowNotice = { ok: true, text: '✓ 已刪除：' + original.name + '／' + original.dept };
           refreshEmployeesCache();
         }
@@ -2118,7 +2217,7 @@ function refreshEmployeesCache() {
           const f = document.getElementById('empCategoryFilter');
           const hidden = f && f.value === '__none__';
           empRowNotice = { ok: true, text: '✓ 已儲存並由伺服器確認：' + who + ' 的歸類為「' + saved.category + '」' +
-            (hidden ? '。目前篩選是「尚未設定歸類」，所以這一列已經不在清單中，屬正常現象。' : '') };
+            (hidden ? '。目前篩選是「尚未設定歸類」，這一列已不符篩選條件，已暫時保留在清單最下方讓您確認。' : '') };
         }
         pendingEmpSaveConfirm = null;
       }
@@ -2139,11 +2238,13 @@ function refreshEmployeesCache() {
 // 換篩選條件或手動重新整理時，把上一次的操作結果訊息清掉，避免顯示過期訊息
 document.getElementById('empCategoryFilter').addEventListener('change', () => {
   empRowNotice = null;
+  justSavedEmpRow = null;
   renderEmployeesAdmin();
 });
 document.getElementById('refreshEmpBtn').addEventListener('click', () => {
   empRowNotice = null;
   pendingEmpSaveConfirm = null;
+  justSavedEmpRow = null;
   refreshEmployeesCache();
 });
 document.getElementById('addEmpBtn').addEventListener('click', () => {
@@ -2162,6 +2263,79 @@ document.getElementById('addEmpBtn').addEventListener('click', () => {
       document.getElementById('newEmpCategory').value = '';
       refreshEmployeesCache();
     }
+  });
+});
+
+// ---------- 員工管理：儲存全部 ----------
+// 只送「真正有變更」的列，每一筆都附上載入畫面時的原始值（originalName/Dept/Category）。
+// 後端會在 ScriptLock 內重新讀取試算表逐筆比對，任何一筆被別人改過就整批不寫入。
+// 不做 optimistic update：畫面一律等後端成功後、重新向伺服器取回最新名單才更新。
+function collectEmployeeChanges() {
+  const wrap = document.getElementById('empListWrap');
+  const byRow = {};
+  (adminCache.employees || []).forEach(e => { byRow[e.row] = e; });
+  const changed = [], unknown = [];
+  wrap.querySelectorAll('tr[data-row]').forEach(tr => {
+    const row = Number(tr.dataset.row);
+    const orig = byRow[row];
+    if (!orig) { unknown.push(row); return; }
+    const name = tr.querySelector('.empName').value.trim();
+    const dept = tr.querySelector('.empDept').value.trim();
+    const category = tr.querySelector('.empCategory').value;
+    if (name === orig.name && dept === orig.dept && category === orig.category) return; // 沒改就不送
+    changed.push({
+      row: row, name: name, dept: dept, category: category,
+      originalName: orig.name, originalDept: orig.dept, originalCategory: orig.category
+    });
+  });
+  return { changed: changed, unknown: unknown };
+}
+
+document.getElementById('saveAllEmpBtn').addEventListener('click', () => {
+  if (empBatchInFlight) return;                 // 防連按
+  const msg = document.getElementById('empRowMsg');
+  const btn = document.getElementById('saveAllEmpBtn');
+  const { changed, unknown } = collectEmployeeChanges();
+  if (unknown.length > 0) {
+    showMsg(msg, false, '員工名單已變動（第 ' + unknown.join('、') + ' 列），請先按「重新整理」再修改。');
+    return;
+  }
+  if (changed.length === 0) { showMsg(msg, false, '沒有需要儲存的變更'); return; }
+
+  // 前端先擋掉明顯不合法的歸類，避免整批被後端退回
+  const bad = changed.find(c => !(adminCache.categories || []).includes(c.category));
+  if (bad) {
+    showMsg(msg, false, '「' + bad.name + '」的歸類不是合法值，請重新選擇後再儲存全部。');
+    return;
+  }
+
+  empBatchInFlight = true;
+  const original = setBtnBusy(btn, '儲存中…(' + changed.length + ' 筆)');
+  document.querySelectorAll('.empSaveBtn, .empDeleteBtn').forEach(b => { b.disabled = true; });
+  msg.innerHTML = '';
+
+  const release = () => {
+    empBatchInFlight = false;
+    restoreBtn(btn, original);
+    document.querySelectorAll('.empSaveBtn, .empDeleteBtn').forEach(b => { b.disabled = false; });
+  };
+
+  // 寫入操作一律使用 callApi（不自動重送），避免逾時重試造成重複寫入
+  callApi({ action: 'saveEmployeesBatch', token: adminToken, employees: changed }).then(res => {
+    if (res && res.success) {
+      release();
+      empRowNotice = { ok: true, text: '✓ ' + ((res && res.message) || '已儲存') + '（已重新向伺服器取回最新名單確認）' };
+      justSavedEmpRow = null;
+      pendingEmpSaveConfirm = null;
+      refreshEmployeesCache();   // 以伺服器重新讀回的資料更新畫面，不做 optimistic update
+      return;
+    }
+    // 失敗／衝突：不重畫表格，保留管理員尚未儲存的修改，只顯示訊息
+    release();
+    showMsg(msg, false, (res && res.message) ? res.message : '儲存失敗，請稍後再試一次');
+  }).catch(() => {
+    release();
+    showMsg(msg, false, '連線失敗，資料未變更，請稍後再試一次');
   });
 });
 
@@ -2933,10 +3107,21 @@ document.getElementById('exportScheduleBtn').addEventListener('click', () => {
   });
 });
 
-loadAvailability();
-loadItemsAsync();
-loadEmployeesAsync();
-loadSelfPayItemsAsync();
+// ---------- 首頁啟動順序 ----------
+// 「各場次名額參考」是同仁最先要看、也最在意的資訊。Apps Script 對同一個部署的
+// 同時請求會互相排隊，一開站就並行 4 支會讓名額被另外 3 支拖慢（實測第一次 5 秒以上）。
+// 改成：名額獨佔第一次連線，其餘三項等它有結果（成功或失敗都算）之後才在背景載入。
+// 照片先用本地快取立刻畫出來，不必等名額，所以首屏不會因此變空。
+renderCachedItemsNow_();
+loadAvailability()
+  .catch(() => {})
+  .then(() => {
+    // 這三項失敗都只影響各自的小功能（照片、姓名自動帶部門、自費下拉），
+    // 不影響報名主流程，也各自有自己的錯誤處理，不會讓首頁壞掉。
+    loadItemsAsync();
+    loadEmployeesAsync();
+    loadSelfPayItemsAsync();
+  });
 </script>
 </body>
 </html>
