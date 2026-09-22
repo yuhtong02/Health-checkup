@@ -129,7 +129,7 @@
     <div id="dateGrid" class="grid"><div class="loading">場次載入中…</div></div>
     <div id="formArea"></div>
 
-    <div class="sec-title"><span class="n">04</span> 已經報名？追加眷屬</div>
+    <div class="sec-title"><span class="n">04</span> 已報名員工新增眷屬</div>
     <div class="panel" id="appendPanel">
       <div id="appendSearchArea">
         <div class="hint" style="margin-bottom:10px;">如果您已經完成報名，之後家屬臨時也想一起參加，可以在這裡查詢您原本的報名、追加眷屬，不需要重新報名一次。</div>
@@ -893,7 +893,7 @@ function renumberPersonCards() {
   });
 }
 
-// ---------- 已經報名？追加眷屬 ----------
+// ---------- 已報名員工新增眷屬 ----------
 let appendMainInfo = null;      // {name, dept, date}，只放顯示需要的最少資訊
 let appendToken = '';           // 後端發的一次性 token（10 分鐘），前端永遠拿不到本人的身分證字號
 let appendPersonIdCounter = 0;
@@ -1972,12 +1972,42 @@ document.getElementById('addDateBtn').addEventListener('click', () => {
 // 歸類是獨立欄位，與部門互不推導；合法值由後端提供，前端不寫死。
 function categoryOptionsHtml(selected) {
   const cats = adminCache.categories || [];
-  return '<option value="">請選擇歸類</option>' + cats.map(c =>
-    `<option value="${escapeHtml(c)}" ${c === selected ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
+  const cur = String(selected == null ? '' : selected).trim();
+  let html = '<option value="">請選擇歸類</option>' + cats.map(c =>
+    `<option value="${escapeHtml(c)}" ${c === cur ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
+  // 這一列目前的歸類不在合法清單裡（例如舊資料的簡稱、或手動在試算表打的字）時，
+  // 一定要把它當成一個選項顯示出來並選中，絕不能讓畫面退回「請選擇歸類」而讓人以為沒有值。
+  // 值原樣保留、不自動修正；管理員若直接按儲存，後端 isValidCategory_ 會擋下並回報錯誤。
+  if (cur && cats.indexOf(cur) === -1) {
+    html += `<option value="${escapeHtml(cur)}" selected>${escapeHtml(cur)}（目前值，不是標準歸類）</option>`;
+  }
+  return html;
 }
+
+// 儲存／刪除完成後要顯示的訊息。存在這個變數而不是直接寫進 DOM，是因為
+// refreshEmployeesCache() 完成後會整個重畫表格（連 empRowMsg 一起換掉），
+// 直接寫進 DOM 的訊息會在重畫瞬間消失，讓人誤以為「按了沒反應／沒存成功」。
+let empRowNotice = null;            // { ok, text }
+let pendingEmpSaveConfirm = null;   // { row, name } — 用伺服器回傳的資料確認實際存了什麼
 
 function renderEmployeesAdmin() {
   const cats = adminCache.categories || [];
+  // 合法歸類清單還沒到手時，絕對不能先把表格畫出來：
+  // 那會產生一個「只有『請選擇歸類』一個選項」的下拉，把已經存好的歸類蓋成空白顯示，
+  // 看起來就像「儲存後又變回請選擇歸類」，但其實資料是好的。寧可顯示載入中。
+  if (cats.length === 0) {
+    const w = document.getElementById('empListWrap');
+    if (w) {
+      w.innerHTML = adminLoadState.employees === 'error'
+        ? `<div class="msg err">歸類清單載入失敗：${escapeHtml(adminLoadError.employees || '')}
+             <button class="btn ghost small" id="retryEmpCatsBtn" style="margin-left:8px;">重新載入</button></div>
+           <div id="empRowMsg"></div>`
+        : '<div class="loading">歸類清單載入中…</div><div id="empRowMsg"></div>';
+      const rb = document.getElementById('retryEmpCatsBtn');
+      if (rb) rb.addEventListener('click', () => refreshEmployeesCache());
+    }
+    return;
+  }
   const newSel = document.getElementById('newEmpCategory');
   if (newSel && newSel.options.length !== cats.length + 1) newSel.innerHTML = categoryOptionsHtml('');
 
@@ -2006,6 +2036,11 @@ function renderEmployeesAdmin() {
       </td></tr>`).join('')}
     </tbody></table><div id="empRowMsg"></div>`;
 
+  // 表格重畫之後，把上一次操作的結果訊息補回去（否則會被 innerHTML 洗掉）
+  if (empRowNotice) {
+    showMsg(document.getElementById('empRowMsg'), empRowNotice.ok, empRowNotice.text);
+  }
+
   wrap.querySelectorAll('.empSaveBtn').forEach(btn => {
     btn.addEventListener('click', () => {
       const tr = btn.closest('tr');
@@ -2025,7 +2060,13 @@ function renderEmployeesAdmin() {
             originalName: original.name, originalDept: original.dept
           }
         },
-        onSuccess: () => refreshEmployeesCache()
+        // 後端明確 success 之後才走這裡。不 optimistic：畫面上的「已儲存」訊息
+        // 是等 refreshEmployeesCache() 把伺服器最新資料抓回來後，依實際回傳值產生的。
+        onSuccess: () => {
+          empRowNotice = null;
+          pendingEmpSaveConfirm = { row: row, name: tr.querySelector('.empName').value.trim() };
+          refreshEmployeesCache();
+        }
       });
     });
   });
@@ -2044,7 +2085,12 @@ function renderEmployeesAdmin() {
           action: 'deleteEmployee', token: adminToken,
           employee: { row: row, originalName: original.name, originalDept: original.dept }
         },
-        onSuccess: () => refreshEmployeesCache()
+        onSuccess: () => {
+          // 刪除後列號會整個位移，之前那筆儲存確認訊息已經沒有意義，先清掉
+          pendingEmpSaveConfirm = null;
+          empRowNotice = { ok: true, text: '✓ 已刪除：' + original.name + '／' + original.dept };
+          refreshEmployeesCache();
+        }
       });
     });
   });
@@ -2058,6 +2104,24 @@ function refreshEmployeesCache() {
       adminCache.employees = res.employees || [];
       adminCache.categories = res.categories || adminCache.categories;
       adminLoadState.employees = 'ok';
+      // 剛儲存過某一列：用「伺服器這次回傳的實際內容」產生確認訊息，
+      // 不是用前端送出去的值，也不是假設成功。存錯／沒存到都會據實顯示。
+      if (pendingEmpSaveConfirm) {
+        const saved = (adminCache.employees || []).find(e => e.row === pendingEmpSaveConfirm.row);
+        const who = escapeHtml(pendingEmpSaveConfirm.name || '');
+        if (!saved) {
+          empRowNotice = { ok: false, text: '已送出，但重新讀取後在名單中找不到這一列（第 ' +
+            pendingEmpSaveConfirm.row + ' 列），請按「重新整理」確認目前名單。' };
+        } else if (!saved.category) {
+          empRowNotice = { ok: false, text: who + '：伺服器回傳的歸類仍然是空白，請再試一次或檢查「員工名單」C 欄。' };
+        } else {
+          const f = document.getElementById('empCategoryFilter');
+          const hidden = f && f.value === '__none__';
+          empRowNotice = { ok: true, text: '✓ 已儲存並由伺服器確認：' + who + ' 的歸類為「' + saved.category + '」' +
+            (hidden ? '。目前篩選是「尚未設定歸類」，所以這一列已經不在清單中，屬正常現象。' : '') };
+        }
+        pendingEmpSaveConfirm = null;
+      }
       persistAdminCache();
       renderCurrentAdminView(); // 員工管理與未報名提醒都會一起更新
     } else {
@@ -2072,8 +2136,16 @@ function refreshEmployeesCache() {
   });
 }
 
-document.getElementById('empCategoryFilter').addEventListener('change', renderEmployeesAdmin);
-document.getElementById('refreshEmpBtn').addEventListener('click', () => refreshEmployeesCache());
+// 換篩選條件或手動重新整理時，把上一次的操作結果訊息清掉，避免顯示過期訊息
+document.getElementById('empCategoryFilter').addEventListener('change', () => {
+  empRowNotice = null;
+  renderEmployeesAdmin();
+});
+document.getElementById('refreshEmpBtn').addEventListener('click', () => {
+  empRowNotice = null;
+  pendingEmpSaveConfirm = null;
+  refreshEmployeesCache();
+});
 document.getElementById('addEmpBtn').addEventListener('click', () => {
   const name = document.getElementById('newEmpName').value.trim();
   const dept = document.getElementById('newEmpDept').value.trim();
@@ -2535,6 +2607,62 @@ function splitConfigDate(raw) {
   return { label: s, weekday: '' };
 }
 
+// C 欄出生日期：健檢時程表統一顯示成民國格式「民國年/MM/DD」（例如 86/06/12）。
+// 民國年不補零，86 就是 86，不會變成 086。
+//
+// ⚠️ 這純粹是「產生 Excel 時的顯示轉換」，只在 buildScheduleWorkbook 內使用：
+//    Google Sheet 的原始出生日期、報名資料、員工名單、API 傳輸格式、
+//    Section04 的完整出生日期查詢（findRegistration）全部不受影響，一個字都沒有動。
+//
+// 解析規則刻意與後端 parseBirthFullDate_ 一致（保守、不猜測）：
+//    年 >= 1000 → 西元年；年 1~200 → 民國年（+1911）；年 201~999 → 語意不明，放棄解析。
+// 不用字串 substring 假設來源格式，也不用 new Date(字串) 解析（會有時區與瀏覽器差異）。
+// 任何無法可靠解析的值一律「原值原樣回傳」，絕不輸出 Invalid Date、絕不自行猜日期。
+function isRealCalendarDateForSchedule_(y, m, d) {
+  if (!(y >= 1 && m >= 1 && m <= 12 && d >= 1)) return false;
+  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  let max = daysInMonth[m - 1];
+  if (m === 2 && ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0)) max = 29;
+  return d <= max;
+}
+function toRocBirthDate(value) {
+  if (value == null || value === '') return value;
+  let y = null, m = null, d = null;
+
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    // Invalid Date 沒有「原值」可保留，字串化會變成 "Invalid Date"，
+    // 絕不能寫進 Excel，所以回傳空白（該格留空）。
+    if (isNaN(value.getTime())) return '';
+    // 直接讀本地年月日欄位，不經 toISOString()／UTC，避免日期前後差一天
+    y = value.getFullYear(); m = value.getMonth() + 1; d = value.getDate();
+  } else {
+    const s = String(value).trim();
+    if (!s) return value;
+    // 寫了「民國」二字時，年份一律當民國年，不套用 >= 1000 的西元判斷
+    let mt = s.match(/^民國\s*(\d{1,4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/);
+    if (mt) {
+      const rocYearIn = Number(mt[1]);
+      if (!(rocYearIn >= 1 && rocYearIn <= 200)) return value;
+      y = rocYearIn + 1911; m = Number(mt[2]); d = Number(mt[3]);
+    } else {
+      mt = s.match(/^(\d{1,4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/);
+      if (!mt) mt = s.match(/^(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+      if (!mt) return value;                    // 認不得的寫法：原值原樣回傳
+      const rawYear = Number(mt[1]);
+      if (rawYear >= 1000) y = rawYear;
+      else if (rawYear >= 1 && rawYear <= 200) y = rawYear + 1911;
+      else return value;                        // 201~999 語意不明，不猜
+      m = Number(mt[2]); d = Number(mt[3]);
+    }
+  }
+
+  if (!isRealCalendarDateForSchedule_(y, m, d)) return value; // 例如 2 月 30 日
+  const roc = y - 1911;
+  if (roc < 1) return value;                    // 西元 1912 年以前沒有對應的民國年
+  const p2 = n => (n < 10 ? '0' : '') + n;
+  return roc + '/' + p2(m) + '/' + p2(d);
+}
+
 // X 欄：素食與自費加選必須同時保留，不可互相覆蓋
 function xColumnText(r) {
   const parts = [];
@@ -2637,7 +2765,10 @@ function buildScheduleWorkbook(data) {
     const firstData = aoa.length;
     people.forEach(p => {
       const map = {
-        [COL_A]: p.name, [COL_B]: p.idNumber, [COL_C]: p.birthDate,
+        // C 欄一律轉成民國格式顯示；解析不了就原值原樣輸出（見 toRocBirthDate）。
+        // 這裡是所有區塊（三家公司本人、未歸類、其他日期本人、眷屬）共用的資料列組裝，
+        // 所以本人與眷屬的出生日期格式一定一致。
+        [COL_A]: p.name, [COL_B]: p.idNumber, [COL_C]: toRocBirthDate(p.birthDate),
         [COL_X]: xColumnText(p), [COL_Y]: p.phone
       };
       if (p.date === OTHER_DATE_LABEL) {
