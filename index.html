@@ -490,6 +490,10 @@ const API_TIMEOUT_MS = 45000;       // 預設（含所有寫入）：大於後�
 const API_READ_TIMEOUT_MS = 15000;  // 唯讀查詢：不必等鎖，逾時就交給既有重試
 const API_TIMEOUT_MESSAGE = '連線逾時，後端可能已完成處理，請重新整理確認目前狀態，請勿重複送出';
 
+// 次要唯讀資料的起跑延遲：讓最重要的那一支（前台 availability／後台 rosterInit）
+// 先搶到第一個連線，但其餘資料不必等它「整個跑完」才開始，避免串行瀑布。
+const SECONDARY_LOAD_DELAY_MS = 300;
+
 // 判斷一個錯誤是不是「我們自己的逾時」，而不是一般網路錯誤
 function isApiTimeout(err) {
   return !!(err && err.__hcTimeout);
@@ -1660,7 +1664,13 @@ function loadAdminSecondary() {
 function bootstrapAdminCache() {
   hydrateAdminCacheFromStorage();
   renderCurrentAdminView();
-  return refreshAdminCore().then(() => loadAdminSecondary());
+  // rosterInit 仍然第一個起跑（總覽／名冊要最快出現），但次要資料改成錯開一小段時間後
+  // 就自己開始，不再等 rosterInit settle。rosterInit 失敗或逾時都不會卡住次要資料。
+  const core = refreshAdminCore();
+  const secondary = new Promise(resolve => {
+    setTimeout(() => resolve(loadAdminSecondary()), SECONDARY_LOAD_DELAY_MS);
+  });
+  return Promise.all([core, secondary]);
 }
 
 // 依 adminCache.registrations + capacitiesConfig 在前端本地重新計算場次統計，不需要重新讀取 Sheet
@@ -3155,20 +3165,20 @@ document.getElementById('exportScheduleBtn').addEventListener('click', () => {
 });
 
 // ---------- 首頁啟動順序 ----------
-// 「各場次名額參考」是同仁最先要看、也最在意的資訊。Apps Script 對同一個部署的
-// 同時請求會互相排隊，一開站就並行 4 支會讓名額被另外 3 支拖慢（實測第一次 5 秒以上）。
-// 改成：名額獨佔第一次連線，其餘三項等它有結果（成功或失敗都算）之後才在背景載入。
-// 照片先用本地快取立刻畫出來，不必等名額，所以首屏不會因此變空。
+// 「各場次名額參考」是同仁最先要看、也最在意的資訊，所以 availability 仍然第一個起跑，
+// 搶到第一個連線。但其餘三項不再等它「整個跑完」——只錯開一小段時間就自己開始，
+// 避免原本「availability 慢 → 其他全部跟著慢」的串行瀑布。
+// availability 失敗或逾時也不會擋住這三項（它們在獨立的 setTimeout 裡）。
+// 照片先用本地快取立刻畫出來，不必等任何 API，所以首屏不會變空。
 renderCachedItemsNow_();
-loadAvailability()
-  .catch(() => {})
-  .then(() => {
-    // 這三項失敗都只影響各自的小功能（照片、姓名自動帶部門、自費下拉），
-    // 不影響報名主流程，也各自有自己的錯誤處理，不會讓首頁壞掉。
-    loadItemsAsync();
-    loadEmployeesAsync();
-    loadSelfPayItemsAsync();
-  });
+loadAvailability();
+setTimeout(() => {
+  // 這三項失敗都只影響各自的小功能（照片、姓名自動帶部門、自費下拉），
+  // 不影響報名主流程，也各自有自己的錯誤處理，不會讓首頁壞掉。
+  loadItemsAsync();
+  loadEmployeesAsync();
+  loadSelfPayItemsAsync();
+}, SECONDARY_LOAD_DELAY_MS);
 </script>
 </body>
 </html>
