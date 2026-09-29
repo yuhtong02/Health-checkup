@@ -16,6 +16,9 @@
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;line-height:1.6;}
   .wrap{max-width:980px;margin:0 auto;padding:28px 20px 70px;}
+  body.admin-wide .wrap{max-width:1440px;}
+  #employeesView .panel{max-width:none;}
+  #employeesView table{width:100%;}
   header{margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;}
   .eyebrow{font-size:13px;letter-spacing:.12em;color:var(--primary);font-weight:700;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
   .eyebrow::before{content:"";width:18px;height:2px;background:var(--accent);display:inline-block;}
@@ -308,6 +311,15 @@
       </div>
 
       <div id="employeesView" class="admin-view" style="display:none;">
+        <div class="panel" style="margin-bottom:14px;">
+          <div style="font-weight:700;margin-bottom:10px;">健檢資格設定</div>
+          <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">
+            <div class="field" style="margin:0;min-width:220px;"><label>資格基準日（民國年）</label><input id="eligibilityAsOfInput" placeholder="例如：115/10/31"></div>
+            <button class="btn small" id="saveEligibilityAsOfBtn">更新基準日</button>
+          </div>
+          <div id="eligibilityRuleHint" class="hint" style="margin-top:8px;">載入資格設定中…</div>
+          <div id="eligibilityConfigMsg"></div>
+        </div>
         <div class="panel">
           <div style="font-weight:700;margin-bottom:12px;">新增員工</div>
           <div class="row2">
@@ -321,6 +333,9 @@
         </div>
         <div class="toolbar" style="margin-top:18px;">
           <select id="empCategoryFilter"><option value="">全部歸類</option></select>
+          <select id="empEligibilityFilter">
+            <option value="">全部資格</option><option value="ok">符合</option><option value="tooNew">未滿一年</option><option value="unknown">到職日待確認</option>
+          </select>
           <button class="btn ghost small" id="refreshEmpBtn">重新整理</button>
           <button class="btn ghost small" id="refreshEmpFromSheetBtn">從試算表更新</button>
           <button class="btn small" id="saveAllEmpBtn">儲存全部</button>
@@ -787,12 +802,14 @@ function renderDates(data) {
 }
 
 let employeeList = [];
+let publicEligibilityAsOf = '2026/10/31';
 let selfPayItems = [];
 
 function loadEmployeesAsync() {
   // 唯讀查詢，可安全重試；失敗只影響「打名字自動帶出部門」，報名表單仍可正常手動填寫
   callApiRead({ action: 'employeesPublic' }).then(res => {
     employeeList = (res && res.employees) || [];
+    if (res && res.eligibilityAsOf) publicEligibilityAsOf = res.eligibilityAsOf;
     refreshDeptSelectIfPresent();
   }).catch(() => {});
 }
@@ -949,7 +966,7 @@ function addPersonCard(identity) {
         if (hasOption) deptSel.value = match.dept;
         if (eligEl) {
           if (match.eligible) eligEl.innerHTML = '';
-          else if (match.eligibilityStatus === 'tooNew') eligEl.innerHTML = '<div class="msg err">依本年度健檢資格規定，截至 2026/10/31 到職尚未滿一年，本年度不符合公司健檢報名資格。</div>';
+          else if (match.eligibilityStatus === 'tooNew') eligEl.innerHTML = '<div class="msg err">依本年度健檢資格規定，截至 ' + escapeHtml(publicEligibilityAsOf) + ' 到職尚未滿一年，本年度不符合公司健檢報名資格。</div>';
           else eligEl.innerHTML = '<div class="msg err">目前無法確認您的健檢資格，請聯絡管理人員確認員工名單的到職日。</div>';
         }
       } else if (eligEl) eligEl.innerHTML = '';
@@ -1460,7 +1477,7 @@ function tryRestoreAdminSession() {
 function logoutAdmin(reasonMsg) {
   adminToken = '';
   clearAdminSession();
-  adminCache = { registrations: null, capacitiesConfig: null, depts: null, employees: null, categories: null, items: null, selfPayItems: null, historyBatches: null };
+  adminCache = { registrations: null, capacitiesConfig: null, depts: null, employees: null, categories: null, items: null, selfPayItems: null, historyBatches: null, eligibilityConfig: null };
   adminLoadState = { core: 'idle', employees: 'idle', items: 'idle', selfPay: 'idle', history: 'idle' };
   adminLoadError = { core: '', employees: '', items: '', selfPay: '', history: '' };
   lastAdminCoreRefreshAt = 0;
@@ -1589,7 +1606,7 @@ let adminCache = {
   categories: null,     // 三個合法歸類，由後端提供，前端不寫死
   items: null,
   selfPayItems: null,
-  historyBatches: null
+  historyBatches: null, eligibilityConfig: null
 };
 const ADMIN_CACHE_STORAGE_KEY = 'hc_admin_cache_v2';
 
@@ -2179,6 +2196,11 @@ function renderEmployeesAdmin() {
   const all = adminCache.employees || [];
   let rows = !currentFilter ? all
     : (currentFilter === '__none__' ? all.filter(e => !e.category) : all.filter(e => e.category === currentFilter));
+  const eligibilityFilter = (document.getElementById('empEligibilityFilter') || {}).value || '';
+  if (eligibilityFilter === 'ok') rows = rows.filter(e => e.eligible === true);
+  else if (eligibilityFilter === 'tooNew') rows = rows.filter(e => e.eligibilityStatus === 'tooNew');
+  else if (eligibilityFilter === 'unknown') rows = rows.filter(e => e.eligibilityStatus === 'missing' || e.eligibilityStatus === 'invalid');
+  renderEligibilityConfig(adminCache.eligibilityConfig);
 
   // 把剛儲存的那一列釘住：即使它已經不符合目前的篩選條件，也要留在畫面上，
   // 讓管理員親眼看到「伺服器存進去的值」，不會誤以為儲存失敗或跳回請選擇歸類。
@@ -2190,7 +2212,7 @@ function renderEmployeesAdmin() {
 
   const wrap = document.getElementById('empListWrap');
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的員工</div><div id="empRowMsg"></div>'; return; }
-  wrap.innerHTML = `<table style="min-width:780px;"><thead><tr>
+  wrap.innerHTML = `<table style="min-width:980px;"><thead><tr>
       <th>姓名</th><th>部門</th><th>歸類</th><th>到職日</th><th>資格</th><th>操作</th></tr></thead><tbody>
     ${rows.map(e => {
       const just = (e.row === justSavedEmpRow);
@@ -2280,6 +2302,7 @@ function refreshEmployeesCache() {
     if (res && res.success) {
       adminCache.employees = res.employees || [];
       adminCache.categories = res.categories || adminCache.categories;
+      adminCache.eligibilityConfig = res.eligibilityConfig || adminCache.eligibilityConfig;
       adminLoadState.employees = 'ok';
       // 剛儲存過某一列：用「伺服器這次回傳的實際內容」產生確認訊息，
       // 不是用前端送出去的值，也不是假設成功。存錯／沒存到都會據實顯示。
@@ -2319,6 +2342,31 @@ document.getElementById('empCategoryFilter').addEventListener('change', () => {
   justSavedEmpRow = null;
   renderEmployeesAdmin();
 });
+document.getElementById('empEligibilityFilter').addEventListener('change', () => {
+  empRowNotice = null; justSavedEmpRow = null; renderEmployeesAdmin();
+});
+function renderEligibilityConfig(cfg) {
+  if (!cfg) return;
+  const input = document.getElementById('eligibilityAsOfInput');
+  const hint = document.getElementById('eligibilityRuleHint');
+  if (input && document.activeElement !== input) input.value = cfg.asOfRoc || '';
+  if (hint) hint.textContent = '目前基準日：' + (cfg.asOfRoc || cfg.asOf || '—') + '；到職日 ' + (cfg.cutoffRoc || cfg.cutoff || '—') + '（含）以前＝符合，之後＝未滿一年。';
+}
+document.getElementById('saveEligibilityAsOfBtn').addEventListener('click', () => {
+  const input = document.getElementById('eligibilityAsOfInput');
+  const value = input.value.trim();
+  if (!value) { showMsg(document.getElementById('eligibilityConfigMsg'), false, '請輸入資格基準日'); return; }
+  runMutation({
+    button: document.getElementById('saveEligibilityAsOfBtn'), msgEl: document.getElementById('eligibilityConfigMsg'),
+    busyText: '更新中…', doneText: '✓ 基準日已更新',
+    payload: { action: 'saveEligibilityConfig', token: adminToken, asOf: value },
+    onSuccess: (res) => {
+      adminCache.eligibilityConfig = res;
+      renderEligibilityConfig(res);
+      refreshEmployeesCache();
+    }
+  });
+});
 document.getElementById('refreshEmpBtn').addEventListener('click', () => {
   empRowNotice = null;
   pendingEmpSaveConfirm = null;
@@ -2337,6 +2385,7 @@ document.getElementById('refreshEmpFromSheetBtn').addEventListener('click', () =
     if (res && res.success) {
       adminCache.employees = res.employees || [];
       adminCache.categories = res.categories || adminCache.categories;
+      adminCache.eligibilityConfig = res.eligibilityConfig || adminCache.eligibilityConfig;
       adminLoadState.employees = 'ok';
       empRowNotice = { ok: true, text: '✓ 已從試算表重新讀取最新員工資料' };
       persistAdminCache(); renderEmployeesAdmin(); loadEmployeesAsync();
