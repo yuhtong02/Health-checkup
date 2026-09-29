@@ -16,7 +16,9 @@
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;line-height:1.6;}
   .wrap{max-width:980px;margin:0 auto;padding:28px 20px 70px;}
-  body.admin-wide .wrap{max-width:1440px;}
+  body.admin-wide .wrap{max-width:1600px;width:calc(100% - 24px);}
+  body.admin-wide #adminCard{max-width:none;}
+  #employeesView .toolbar{position:sticky;top:0;z-index:5;background:var(--card);padding:10px 0;border-bottom:1px solid var(--line);}
   #employeesView .panel{max-width:none;}
   #employeesView table{width:100%;}
   header{margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;}
@@ -1578,6 +1580,7 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     tab.classList.add('active');
     document.getElementById(tab.dataset.view + 'View').style.display = 'block';
     currentAdminView = tab.dataset.view;
+    document.body.classList.toggle('admin-wide', currentAdminView === 'employees');
     renderCurrentAdminView(); // 直接從記憶體 cache 渲染，不打 API，接近瞬間顯示
   });
 });
@@ -2186,6 +2189,21 @@ function renderEmployeesAdmin() {
   const newSel = document.getElementById('newEmpCategory');
   if (newSel && newSel.options.length !== cats.length + 1) newSel.innerHTML = categoryOptionsHtml('');
 
+  // 顯示與篩選時直接用「到職日 + 目前基準日 cutoff」重算，避免舊快取的 eligible 旗標造成畫面誤判。
+  const displayEligibility = (e) => {
+    const raw = String(e.hireDate || e.hireDateRaw || '').trim();
+    const m = raw.match(/^(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+    if (!m) return 'unknown';
+    let y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    if (y >= 1 && y <= 200) y += 1911; else if (y < 1000) return 'unknown';
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return 'unknown';
+    const iso = y + '-' + String(mo).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+    const cutoff = String((adminCache.eligibilityConfig || {}).cutoff || '');
+    if (!cutoff) return e.eligible ? 'ok' : (e.eligibilityStatus || 'unknown');
+    return iso <= cutoff ? 'ok' : 'tooNew';
+  };
+
   const filterSel = document.getElementById('empCategoryFilter');
   const currentFilter = filterSel.value;
   filterSel.innerHTML = '<option value="">全部歸類</option>' +
@@ -2197,9 +2215,9 @@ function renderEmployeesAdmin() {
   let rows = !currentFilter ? all
     : (currentFilter === '__none__' ? all.filter(e => !e.category) : all.filter(e => e.category === currentFilter));
   const eligibilityFilter = (document.getElementById('empEligibilityFilter') || {}).value || '';
-  if (eligibilityFilter === 'ok') rows = rows.filter(e => e.eligible === true);
-  else if (eligibilityFilter === 'tooNew') rows = rows.filter(e => e.eligibilityStatus === 'tooNew');
-  else if (eligibilityFilter === 'unknown') rows = rows.filter(e => e.eligibilityStatus === 'missing' || e.eligibilityStatus === 'invalid');
+  if (eligibilityFilter === 'ok') rows = rows.filter(e => displayEligibility(e) === 'ok');
+  else if (eligibilityFilter === 'tooNew') rows = rows.filter(e => displayEligibility(e) === 'tooNew');
+  else if (eligibilityFilter === 'unknown') rows = rows.filter(e => displayEligibility(e) === 'unknown');
   renderEligibilityConfig(adminCache.eligibilityConfig);
 
   // 把剛儲存的那一列釘住：即使它已經不符合目前的篩選條件，也要留在畫面上，
@@ -2222,7 +2240,7 @@ function renderEmployeesAdmin() {
       <td><input class="empDept" value="${escapeHtml(e.dept)}" style="min-width:110px;"></td>
       <td><select class="empCategory" style="min-width:210px;">${categoryOptionsHtml(e.category)}</select></td>
       <td><input class="empHireDate" value="${escapeHtml(e.hireDate || e.hireDateRaw || '')}" placeholder="114/10/31" style="min-width:120px;"></td>
-      <td style="white-space:nowrap;">${e.eligible ? '符合' : (e.eligibilityStatus === 'tooNew' ? '未滿一年' : '待確認')}</td>
+      <td style="white-space:nowrap;">${displayEligibility(e) === 'ok' ? '符合' : (displayEligibility(e) === 'tooNew' ? '未滿一年' : '待確認')}</td>
       <td style="white-space:nowrap;">
         <button class="btn small empSaveBtn">儲存</button>
         <button class="btn danger small empDeleteBtn">刪除</button>
