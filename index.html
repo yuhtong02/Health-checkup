@@ -62,6 +62,16 @@
   .msg.ok{background:var(--primary-light);color:var(--primary-dark);}
   .msg.err{background:#F6E4E1;color:var(--danger);}
   .loading{color:var(--ink-soft);font-size:14px;padding:20px 0;}
+  /* 01／02 載入中的佔位高度。
+     03 不必等 API 就會建立，若 01／02 只剩一行灰字，三個區塊的視覺份量會嚴重失衡，
+     看起來像「03 先做完、01／02 還沒開始」；而且資料回來時 01／02 會撐開，把 03 往下推。
+     這裡先把兩區各自的高度預留起來，資料回來直接填滿，不會推動下方的 03。
+     高度刻意對齊既有卡片：.item-card img（182/122/112）與 .ticket（約 104）。
+     .short 的權重高於下方 media query，所以 02 在任何寬度都維持 104px。 */
+  .loading.reserve{display:flex;align-items:center;justify-content:center;min-height:182px;padding:0;grid-column:1/-1;}
+  .loading.reserve.short{min-height:104px;}
+  @media(max-width:520px){.loading.reserve{min-height:122px;}}
+  @media(max-width:430px){.loading.reserve{min-height:112px;}}
   .hint{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
 
   /* 健檢項目 */
@@ -142,10 +152,10 @@
   <div id="signup" class="view active">
     <div id="itemsArea">
       <div class="sec-title"><span class="n">01</span> 健檢項目參考</div>
-      <div id="itemsContent" class="loading">圖片載入中…</div>
+      <div id="itemsContent" class="loading reserve">圖片載入中…</div>
     </div>
     <div class="sec-title"><span class="n">02</span> 各場次名額參考</div>
-    <div id="dateGrid" class="grid"><div class="loading">場次載入中…</div></div>
+    <div id="dateGrid" class="grid"><div class="loading reserve short">場次載入中…</div></div>
     <div id="formArea"></div>
 
     <div class="sec-title"><span class="n">04</span> 已報名員工新增眷屬</div>
@@ -679,7 +689,7 @@ function showAvailabilityLoadError(backendMessage) {
   const btn = document.getElementById('retryAvailabilityBtn');
   if (btn) {
     btn.addEventListener('click', () => {
-      grid.innerHTML = '<div class="loading">場次載入中…</div>';
+      grid.innerHTML = '<div class="loading reserve short">場次載入中…</div>';
       loadAvailability({ forceRefresh: true });
     });
   }
