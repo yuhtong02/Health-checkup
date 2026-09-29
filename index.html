@@ -315,15 +315,17 @@
             <div class="field"><label>部門 *</label><input id="newEmpDept" autocomplete="off"></div>
           </div>
           <div class="field"><label>歸類 *</label><select id="newEmpCategory"></select></div>
+          <div class="field"><label>到職日（民國年）</label><input id="newEmpHireDate" placeholder="例如：114/10/31" autocomplete="off"><div class="hint">可輸入 114/10/31；空白可先儲存，但該員工報名時會被擋下，直到補齊到職日。</div></div>
           <button class="btn" id="addEmpBtn">新增員工</button>
           <div id="addEmpMsg"></div>
         </div>
         <div class="toolbar" style="margin-top:18px;">
           <select id="empCategoryFilter"><option value="">全部歸類</option></select>
           <button class="btn ghost small" id="refreshEmpBtn">重新整理</button>
+          <button class="btn ghost small" id="refreshEmpFromSheetBtn">從試算表更新</button>
           <button class="btn small" id="saveAllEmpBtn">儲存全部</button>
         </div>
-        <div class="hint" style="margin-bottom:8px;">可以同時修改多位員工的姓名／部門／歸類，最後按一次「儲存全部」。只會送出真正有變更的資料。</div>
+        <div class="hint" style="margin-bottom:8px;">可以同時修改多位員工的姓名／部門／歸類／到職日，最後按一次「儲存全部」。只會送出真正有變更的資料。到職日建議使用民國格式 YYY/MM/DD。</div>
         <div id="empListWrap" style="overflow-x:auto;"></div>
       </div>
 
@@ -880,7 +882,7 @@ function addPersonCard(identity) {
       </div>` : `
       <div class="field"><label>身份證字號 *</label><input id="p${id}_idnum" placeholder="A123456789"></div>`}
     </div>
-    ${isMain ? `<div class="field"><label>身份證字號 *</label><input id="p${id}_idnum" placeholder="A123456789"></div>` : ''}
+    ${isMain ? `<div class="field"><label>身份證字號 *</label><input id="p${id}_idnum" placeholder="A123456789"></div><div id="p${id}_eligibility"></div>` : ''}
     <div class="field">
       <label>出生日期（民國年） *</label>
       <div style="display:flex;gap:6px;">
@@ -940,11 +942,17 @@ function addPersonCard(identity) {
     document.getElementById(`p${id}_name`).addEventListener('input', () => {
       const val = document.getElementById(`p${id}_name`).value.trim();
       const match = employeeList.find(e => e.name === val);
+      const eligEl = document.getElementById(`p${id}_eligibility`);
       if (match) {
         const deptSel = document.getElementById(`p${id}_dept`);
         const hasOption = Array.from(deptSel.options).some(o => o.value === match.dept);
         if (hasOption) deptSel.value = match.dept;
-      }
+        if (eligEl) {
+          if (match.eligible) eligEl.innerHTML = '';
+          else if (match.eligibilityStatus === 'tooNew') eligEl.innerHTML = '<div class="msg err">依本年度健檢資格規定，截至 2026/10/31 到職尚未滿一年，本年度不符合公司健檢報名資格。</div>';
+          else eligEl.innerHTML = '<div class="msg err">目前無法確認您的健檢資格，請聯絡管理人員確認員工名單的到職日。</div>';
+        }
+      } else if (eligEl) eligEl.innerHTML = '';
     });
     document.getElementById(`p${id}_dept`).addEventListener('change', () => {
       const other = document.getElementById(`p${id}_dept`).value === '__other__';
@@ -2183,7 +2191,7 @@ function renderEmployeesAdmin() {
   const wrap = document.getElementById('empListWrap');
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的員工</div><div id="empRowMsg"></div>'; return; }
   wrap.innerHTML = `<table style="min-width:780px;"><thead><tr>
-      <th>姓名</th><th>部門</th><th>歸類</th><th>操作</th></tr></thead><tbody>
+      <th>姓名</th><th>部門</th><th>歸類</th><th>到職日</th><th>資格</th><th>操作</th></tr></thead><tbody>
     ${rows.map(e => {
       const just = (e.row === justSavedEmpRow);
       return `<tr data-row="${e.row}"${just ? ' style="background:var(--primary-light);"' : ''}>
@@ -2191,6 +2199,8 @@ function renderEmployeesAdmin() {
         just && pinnedRow ? '<div class="hint" style="color:var(--primary-dark);font-weight:700;">剛儲存（不符目前篩選，暫時保留顯示）</div>' : ''}</td>
       <td><input class="empDept" value="${escapeHtml(e.dept)}" style="min-width:110px;"></td>
       <td><select class="empCategory" style="min-width:210px;">${categoryOptionsHtml(e.category)}</select></td>
+      <td><input class="empHireDate" value="${escapeHtml(e.hireDate || e.hireDateRaw || '')}" placeholder="114/10/31" style="min-width:120px;"></td>
+      <td style="white-space:nowrap;">${e.eligible ? '符合' : (e.eligibilityStatus === 'tooNew' ? '未滿一年' : '待確認')}</td>
       <td style="white-space:nowrap;">
         <button class="btn small empSaveBtn">儲存</button>
         <button class="btn danger small empDeleteBtn">刪除</button>
@@ -2220,7 +2230,8 @@ function renderEmployeesAdmin() {
             name: tr.querySelector('.empName').value.trim(),
             dept: tr.querySelector('.empDept').value.trim(),
             category: tr.querySelector('.empCategory').value,
-            originalName: original.name, originalDept: original.dept
+            hireDate: tr.querySelector('.empHireDate').value.trim(),
+            originalName: original.name, originalDept: original.dept, originalCategory: original.category, originalHireDate: original.hireDateRaw || original.hireDate || ''
           }
         },
         // 後端明確 success 之後才走這裡。不 optimistic：畫面上的「已儲存」訊息
@@ -2248,7 +2259,7 @@ function renderEmployeesAdmin() {
         busyText: '刪除中...', doneText: '✓ 已刪除',
         payload: {
           action: 'deleteEmployee', token: adminToken,
-          employee: { row: row, originalName: original.name, originalDept: original.dept }
+          employee: { row: row, originalName: original.name, originalDept: original.dept, originalCategory: original.category, originalHireDate: original.hireDateRaw || original.hireDate || '' }
         },
         onSuccess: () => {
           // 刪除後列號會整個位移，之前那筆儲存確認訊息與釘選都沒有意義，先清掉
@@ -2314,20 +2325,40 @@ document.getElementById('refreshEmpBtn').addEventListener('click', () => {
   justSavedEmpRow = null;
   refreshEmployeesCache();
 });
+document.getElementById('refreshEmpFromSheetBtn').addEventListener('click', () => {
+  if (empBatchInFlight) return;
+  const pending = collectEmployeeChanges();
+  if (pending.changed.length > 0 && !confirm('目前畫面有尚未儲存的修改。從試算表更新會捨棄這些修改，確定繼續嗎？')) return;
+  const btn = document.getElementById('refreshEmpFromSheetBtn');
+  const original = setBtnBusy(btn, '更新中…');
+  empRowNotice = null; pendingEmpSaveConfirm = null; justSavedEmpRow = null;
+  callApiRead({ action: 'employeesRefresh', token: adminToken }).then(res => {
+    restoreBtn(btn, original);
+    if (res && res.success) {
+      adminCache.employees = res.employees || [];
+      adminCache.categories = res.categories || adminCache.categories;
+      adminLoadState.employees = 'ok';
+      empRowNotice = { ok: true, text: '✓ 已從試算表重新讀取最新員工資料' };
+      persistAdminCache(); renderEmployeesAdmin(); loadEmployeesAsync();
+    } else showMsg(document.getElementById('empRowMsg'), false, (res && res.message) || '更新失敗');
+  }).catch(() => { restoreBtn(btn, original); showMsg(document.getElementById('empRowMsg'), false, '連線失敗，請稍後再試一次'); });
+});
 document.getElementById('addEmpBtn').addEventListener('click', () => {
   const name = document.getElementById('newEmpName').value.trim();
   const dept = document.getElementById('newEmpDept').value.trim();
   const category = document.getElementById('newEmpCategory').value;
+  const hireDate = document.getElementById('newEmpHireDate').value.trim();
   const msg = document.getElementById('addEmpMsg');
   if (!name || !dept || !category) { showMsg(msg, false, '姓名、部門、歸類都必須填寫'); return; }
   runMutation({
     button: document.getElementById('addEmpBtn'), msgEl: msg,
     busyText: '儲存中...', doneText: '✓ 已新增',
-    payload: { action: 'saveEmployee', token: adminToken, employee: { row: 0, name, dept, category } },
+    payload: { action: 'saveEmployee', token: adminToken, employee: { row: 0, name, dept, category, hireDate } },
     onSuccess: () => {
       document.getElementById('newEmpName').value = '';
       document.getElementById('newEmpDept').value = '';
       document.getElementById('newEmpCategory').value = '';
+      document.getElementById('newEmpHireDate').value = '';
       refreshEmployeesCache();
     }
   });
@@ -2349,10 +2380,12 @@ function collectEmployeeChanges() {
     const name = tr.querySelector('.empName').value.trim();
     const dept = tr.querySelector('.empDept').value.trim();
     const category = tr.querySelector('.empCategory').value;
-    if (name === orig.name && dept === orig.dept && category === orig.category) return; // 沒改就不送
+    const hireDate = tr.querySelector('.empHireDate').value.trim();
+    const originalHireDate = orig.hireDateRaw || orig.hireDate || '';
+    if (name === orig.name && dept === orig.dept && category === orig.category && hireDate === originalHireDate) return; // 沒改就不送
     changed.push({
-      row: row, name: name, dept: dept, category: category,
-      originalName: orig.name, originalDept: orig.dept, originalCategory: orig.category
+      row: row, name: name, dept: dept, category: category, hireDate: hireDate,
+      originalName: orig.name, originalDept: orig.dept, originalCategory: orig.category, originalHireDate: originalHireDate
     });
   });
   return { changed: changed, unknown: unknown };
