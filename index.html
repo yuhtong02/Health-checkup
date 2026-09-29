@@ -477,17 +477,48 @@ document.getElementById('lightbox').addEventListener('click', (e) => {
   if (e.target.id === 'lightbox') document.getElementById('lightbox').style.display = 'none';
 });
 
-function callApi(payload) {
+// ========== 連線逾時 ==========
+// 原本 fetch 沒有 timeout：Apps Script 若卡住，promise 永遠不會 settle，
+// 畫面就一直停在「載入中」，callApiRead 的重試也永遠不會被觸發，
+// 使用者只能自己按重新整理。加上 AbortController 之後，卡住會變成 reject，
+// 唯讀請求就能交給既有的重試機制自動救回。
+//
+// 兩段不同的上限，理由是後端寫入會等鎖：
+//   submitRegistration_ 等 lock.waitLock(30000)，合法的寫入最長可能超過 30 秒。
+//   若用太短的上限會把「其實正在正常執行的寫入」砍掉，反而更糟。
+const API_TIMEOUT_MS = 45000;       // 預設（含所有寫入）：大於後端 30 秒的等鎖時間
+const API_READ_TIMEOUT_MS = 15000;  // 唯讀查詢：不必等鎖，逾時就交給既有重試
+const API_TIMEOUT_MESSAGE = '連線逾時，後端可能已完成處理，請重新整理確認目前狀態，請勿重複送出';
+
+// 判斷一個錯誤是不是「我們自己的逾時」，而不是一般網路錯誤
+function isApiTimeout(err) {
+  return !!(err && err.__hcTimeout);
+}
+
+function callApi(payload, timeoutMs) {
+  const limitMs = timeoutMs || API_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, limitMs);
   return fetch(APPS_SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: controller.signal
   }).then(r => r.json()).then(res => {
     if (res && res.sessionExpired && adminToken) {
       logoutAdmin('登入逾時，請重新登入');
     }
     return res;
-  });
+  }).catch(err => {
+    // 只有「我們主動 abort」才換成逾時錯誤；其他網路錯誤原樣往外拋，行為完全不變
+    if (timedOut) {
+      const te = new Error(API_TIMEOUT_MESSAGE);
+      te.__hcTimeout = true;
+      throw te;
+    }
+    throw err;
+  }).finally(() => clearTimeout(timer));
 }
 
 // ========== 只給「唯讀查詢」使用的有限次重試 ==========
@@ -509,7 +540,8 @@ const READ_RETRY_DELAYS = [700, 1800]; // 第 1、2 次重試前的等待毫秒�
 
 function callApiRead(payload, attempt) {
   const n = attempt || 0;
-  return callApi(payload).catch(err => {
+  // 唯讀查詢使用較短的逾時上限；卡住時由下面既有的重試邏輯接手
+  return callApi(payload, API_READ_TIMEOUT_MS).catch(err => {
     if (n >= READ_RETRY_MAX) throw err;   // 達到上限就把錯誤往外拋，由呼叫端顯示重試 UI
     return new Promise(resolve => setTimeout(resolve, READ_RETRY_DELAYS[n]))
       .then(() => callApiRead(payload, n + 1));
@@ -577,9 +609,12 @@ function runMutation(opts) {
     restoreBtn(btn, original);
     showMsg(msgEl, false, (res && res.message) ? res.message : '操作失敗，請稍後再試一次');
     return res;
-  }).catch(() => {
+  }).catch(err => {
     restoreBtn(btn, original);
-    showMsg(msgEl, false, '連線失敗，資料未變更，請稍後再試一次');
+    // 逾時 ≠ 失敗：後端可能已經完成寫入，絕不能說「資料未變更」
+    showMsg(msgEl, false, isApiTimeout(err)
+      ? API_TIMEOUT_MESSAGE
+      : '連線失敗，資料未變更，請稍後再試一次');
     return null;
   });
 }
@@ -1193,7 +1228,13 @@ document.getElementById('appendSubmitBtn').addEventListener('click', () => {
         if (res.full) loadAvailability({ forceRefresh: true });
       }
     })
-    .catch(() => {
+    .catch(err => {
+      if (isApiTimeout(err)) {
+        // 後端可能已經寫入眷屬資料，按鈕保持停用，避免再按一次產生重複資料
+        btn.textContent = '請重新整理確認';
+        msg.innerHTML = `<div class="msg err">${escapeHtml(API_TIMEOUT_MESSAGE)}</div>`;
+        return;
+      }
       btn.disabled = false; btn.textContent = '確認追加';
       msg.innerHTML = '<div class="msg err">送出失敗，請稍後再試一次。</div>';
     });
@@ -1339,9 +1380,15 @@ document.getElementById('confirmSubmitBtn').addEventListener('click', () => {
         if (res.full) loadAvailability({ forceRefresh: true });
       }
     })
-    .catch(() => {
+    .catch(err => {
       document.getElementById('confirmModal').style.display = 'none';
       confirmBtn.disabled = false; confirmBtn.textContent = '確認送出';
+      if (isApiTimeout(err)) {
+        // 後端可能已經完成報名，報名鈕保持停用，避免再按一次變成重複報名
+        btn.textContent = '請重新整理確認';
+        msg.innerHTML = `<div class="msg err">${escapeHtml(API_TIMEOUT_MESSAGE)}</div>`;
+        return;
+      }
       msg.innerHTML = '<div class="msg err">送出失敗，請稍後再試一次。</div>';
       btn.disabled = false; btn.textContent = '確認報名';
     });
