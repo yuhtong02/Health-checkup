@@ -3171,6 +3171,11 @@ document.getElementById('exportScheduleBtn').addEventListener('click', () => {
 // availability 失敗或逾時也不會擋住這三項（它們在獨立的 setTimeout 裡）。
 // 照片先用本地快取立刻畫出來，不必等任何 API，所以首屏不會變空。
 renderCachedItemsNow_();
+// 報名表單不需要任何 API 就能建立，所以開站就先畫出來，不再等 availability。
+// 日期下拉會先用 personDateOptionsHtml() 既有的「場次載入中…」fallback，
+// 等 availability 回來後由 renderDates() → refreshAllPersonDateSelects() 自動補上真正場次。
+// ensureFormInitialized() 內部有 formInitialized 旗標，renderDates() 裡原有的呼叫會直接 return，不會重複建立。
+ensureFormInitialized();
 loadAvailability();
 setTimeout(() => {
   // 這三項失敗都只影響各自的小功能（照片、姓名自動帶部門、自費下拉），
