@@ -16,8 +16,28 @@
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;line-height:1.6;}
   .wrap{max-width:980px;margin:0 auto;padding:28px 20px 70px;}
-  body.admin-wide .wrap{max-width:1600px;width:calc(100% - 24px);}
-  body.admin-wide #adminCard{max-width:none;}
+  /* 員工管理寬版：真正的祖先鏈是 .wrap > #admin.view > #adminContent > #employeesView。
+     先前寫的 body.admin-wide #adminCard 是死規則——HTML 裡根本沒有 id="adminCard" 的元素，
+     所以完全沒有作用。這裡改成對實際存在的每一層都解除寬度限制。 */
+  body.admin-wide .wrap{max-width:1560px;width:calc(100% - 24px);}
+  body.admin-wide #admin,
+  body.admin-wide #adminContent,
+  body.admin-wide #employeesView{max-width:none;width:100%;}
+  /* 欄位最小寬度改用 class 管理。原本寫成 inline style，inline 的優先權高於任何樣式表規則，
+     所以寬版 CSS 永遠蓋不掉它，這正是桌機仍然出現橫向捲軸的原因。 */
+  .emp-table{min-width:980px;}
+  #employeesView .empName,#employeesView .empDept{min-width:110px;}
+  #employeesView .empCategory{min-width:210px;}
+  #employeesView .empHireDate{min-width:120px;}
+  /* 桌機寬螢幕才解除最小寬度，讓六個欄位一列顯示、不出現橫向捲軸。
+     視窗變窄（含手機）時自動回到上面的 min-width 與 #empListWrap 的 overflow-x 捲動。 */
+  @media(min-width:1100px){
+    body.admin-wide #employeesView .emp-table{min-width:0;width:100%;table-layout:auto;}
+    body.admin-wide #employeesView td input,
+    body.admin-wide #employeesView td select{width:100%;min-width:0;}
+    body.admin-wide #employeesView th,
+    body.admin-wide #employeesView td{padding:8px 9px;}
+  }
   #employeesView .toolbar{position:sticky;top:0;z-index:5;background:var(--card);padding:10px 0;border-bottom:1px solid var(--line);}
   #employeesView .panel{max-width:none;}
   #employeesView table{width:100%;}
@@ -2189,19 +2209,13 @@ function renderEmployeesAdmin() {
   const newSel = document.getElementById('newEmpCategory');
   if (newSel && newSel.options.length !== cats.length + 1) newSel.innerHTML = categoryOptionsHtml('');
 
-  // 顯示與篩選時直接用「到職日 + 目前基準日 cutoff」重算，避免舊快取的 eligible 旗標造成畫面誤判。
+  // 資格一律採用後端 evaluateHireEligibility_ 的判定結果，前端不再自己算一套日期。
+  // 前端只做 missing／invalid → 「待確認」的顯示歸併，不做任何民國／西元換算或比大小，
+  // 避免前後端出現兩套規則而不一致（基準日改變時由 refreshEmployeesCache() 重新取回）。
   const displayEligibility = (e) => {
-    const raw = String(e.hireDate || e.hireDateRaw || '').trim();
-    const m = raw.match(/^(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
-    if (!m) return 'unknown';
-    let y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-    if (y >= 1 && y <= 200) y += 1911; else if (y < 1000) return 'unknown';
-    const dt = new Date(y, mo - 1, d);
-    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return 'unknown';
-    const iso = y + '-' + String(mo).padStart(2,'0') + '-' + String(d).padStart(2,'0');
-    const cutoff = String((adminCache.eligibilityConfig || {}).cutoff || '');
-    if (!cutoff) return e.eligible ? 'ok' : (e.eligibilityStatus || 'unknown');
-    return iso <= cutoff ? 'ok' : 'tooNew';
+    const s = String(e.eligibilityStatus || '');
+    if (s === 'ok' || s === 'tooNew') return s;
+    return 'unknown'; // missing／invalid／未知一律視為「到職日待確認」，絕不當成符合
   };
 
   const filterSel = document.getElementById('empCategoryFilter');
@@ -2230,16 +2244,16 @@ function renderEmployeesAdmin() {
 
   const wrap = document.getElementById('empListWrap');
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的員工</div><div id="empRowMsg"></div>'; return; }
-  wrap.innerHTML = `<table style="min-width:980px;"><thead><tr>
+  wrap.innerHTML = `<table class="emp-table"><thead><tr>
       <th>姓名</th><th>部門</th><th>歸類</th><th>到職日</th><th>資格</th><th>操作</th></tr></thead><tbody>
     ${rows.map(e => {
       const just = (e.row === justSavedEmpRow);
       return `<tr data-row="${e.row}"${just ? ' style="background:var(--primary-light);"' : ''}>
-      <td><input class="empName" value="${escapeHtml(e.name)}" style="min-width:110px;">${
+      <td><input class="empName" value="${escapeHtml(e.name)}">${
         just && pinnedRow ? '<div class="hint" style="color:var(--primary-dark);font-weight:700;">剛儲存（不符目前篩選，暫時保留顯示）</div>' : ''}</td>
-      <td><input class="empDept" value="${escapeHtml(e.dept)}" style="min-width:110px;"></td>
-      <td><select class="empCategory" style="min-width:210px;">${categoryOptionsHtml(e.category)}</select></td>
-      <td><input class="empHireDate" value="${escapeHtml(e.hireDate || e.hireDateRaw || '')}" placeholder="114/10/31" style="min-width:120px;"></td>
+      <td><input class="empDept" value="${escapeHtml(e.dept)}"></td>
+      <td><select class="empCategory">${categoryOptionsHtml(e.category)}</select></td>
+      <td><input class="empHireDate" value="${escapeHtml(e.hireDate || e.hireDateRaw || '')}" placeholder="114/10/31"></td>
       <td style="white-space:nowrap;">${displayEligibility(e) === 'ok' ? '符合' : (displayEligibility(e) === 'tooNew' ? '未滿一年' : '待確認')}</td>
       <td style="white-space:nowrap;">
         <button class="btn small empSaveBtn">儲存</button>
@@ -2322,6 +2336,8 @@ function refreshEmployeesCache() {
       adminCache.categories = res.categories || adminCache.categories;
       adminCache.eligibilityConfig = res.eligibilityConfig || adminCache.eligibilityConfig;
       adminLoadState.employees = 'ok';
+      // 「員工名單」D1 標題不符時，後端不會讓 API 失敗，而是回一個可診斷的警告，這裡顯示出來
+      if (res.schemaWarning) empRowNotice = { ok: false, text: res.schemaWarning };
       // 剛儲存過某一列：用「伺服器這次回傳的實際內容」產生確認訊息，
       // 不是用前端送出去的值，也不是假設成功。存錯／沒存到都會據實顯示。
       if (pendingEmpSaveConfirm) {
