@@ -116,6 +116,13 @@
   @media(max-width:520px){.loading.reserve{min-height:122px;}}
   @media(max-width:430px){.loading.reserve{min-height:112px;}}
   .hint{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  /* 總覽的「最後更新／重新整理」列：低調不搶眼，手機可換行 */
+  .dash-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+  /* 總覽 skeleton：沒有 cache 時先畫出與真實卡片同尺寸的灰塊，避免空白等待與版面跳動 */
+  .skel-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 16px 14px;min-height:102px;}
+  .skel-line{background:var(--line);border-radius:6px;opacity:.55;animation:skelPulse 1.4s ease-in-out infinite;}
+  @keyframes skelPulse{0%,100%{opacity:.35}50%{opacity:.7}}
+  .skel-stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;min-height:62px;}
 
   /* 健檢項目 */
   .item-group{margin-bottom:18px;}
@@ -198,6 +205,7 @@
       <div id="itemsContent" class="loading reserve">圖片載入中…</div>
     </div>
     <div class="sec-title"><span class="n">02</span> 各場次名額參考</div>
+    <div id="availabilityNote" class="hint" style="display:none;margin:0 0 6px;"></div>
     <div id="dateGrid" class="grid"><div class="loading reserve short">場次載入中…</div></div>
     <div id="formArea"></div>
 
@@ -274,6 +282,11 @@
       </div>
 
       <div id="dashboardView" class="admin-view">
+        <div class="dash-meta">
+          <span id="dashUpdatedAt" class="hint" style="margin:0;">最後更新：—</span>
+          <span id="dashRefreshState" class="hint" style="margin:0;"></span>
+          <button class="btn ghost small" id="dashRefreshBtn" style="margin-left:auto;">重新整理</button>
+        </div>
         <div id="statRow" class="stat-row"></div>
         <div id="dashGrid" class="grid"></div>
       </div>
@@ -713,18 +726,32 @@ const AVAILABILITY_CACHE_KEY = 'hc_availability_cache_v1';
 // API 並覆蓋，實際名額檢查也一律在後端 LockService 內重讀試算表，不依賴這份前端快取。
 const AVAILABILITY_CACHE_TTL = 600000;
 
+// 讓本地名額快取失效。用於「後台改動了報名資料、但管理員此刻不在報名頁」的情境：
+// 不值得為了更新一個沒人在看的區塊多打一趟 Apps Script，讓快取失效即可，
+// 下次真的開啟報名頁時自然會重新向後端取得最新名額。
+function invalidateAvailabilityLocalCache_() {
+  try { localStorage.removeItem(AVAILABILITY_CACHE_KEY); } catch (e) {}
+}
+
 // 場次名額：優先載入，不等待照片。若有未過期的本地快取，先立即顯示，
 // 同時一定會在背景重新呼叫 API 更新，畫面上看到的名額最終仍以後端回傳為準。
+//
+// ⚠️ 這份前端快取「只」用於預先顯示。任何正式報名的名額判斷一律由後端在
+// LockService 內重新讀取試算表決定，前端快取完全不參與、也無法影響是否可以報名。
 function loadAvailability(opts) {
   opts = opts || {};
+  let paintedFromCache = false;
   if (!opts.forceRefresh) {
     try {
       const cached = JSON.parse(localStorage.getItem(AVAILABILITY_CACHE_KEY) || 'null');
       if (cached && (Date.now() - cached.ts) < AVAILABILITY_CACHE_TTL) {
         renderDates(cached.dates);
+        paintedFromCache = true;
       }
     } catch (e) { /* 忽略壞掉的快取內容 */ }
   }
+  // 已經用快取畫出場次時，標示「更新中…」讓使用者知道背景還在向後端確認最新名額
+  setAvailabilityRefreshing_(paintedFromCache);
   // 唯讀查詢，連線失敗時最多自動重試 2 次（Apps Script 冷啟動常見）
   return callApiRead({ action: 'availability' }).then(res => {
     if (res.success) {
@@ -734,12 +761,32 @@ function loadAvailability(opts) {
       } catch (e) { /* 私密瀏覽模式等情況下 localStorage 可能無法寫入，忽略即可 */ }
     } else if (document.getElementById('dateGrid').querySelector('.loading')) {
       showAvailabilityLoadError(res && res.message);
+    } else {
+      // 畫面上已有（快取的）場次，後端卻回失敗：保留既有內容，只提示這次沒更新成功
+      setAvailabilityStale_(res && res.message);
     }
   }).catch(() => {
-    // 重試後仍然失敗：給使用者一個明確的「再試一次」按鈕，不要只留下死訊息
+    // 重試後仍然失敗。畫面上還沒有任何場次 → 顯示可重試的錯誤區塊（絕不整區隱藏）；
+    // 已經有快取內容 → 完整保留，只標示「更新失敗，顯示的是先前資料」。
     const grid = document.getElementById('dateGrid');
     if (grid.querySelector('.loading') || grid.children.length === 0) showAvailabilityLoadError();
-  });
+    else setAvailabilityStale_();
+  }).finally(() => { setAvailabilityRefreshing_(false); });
+}
+
+// 02 區塊的背景更新狀態列。只加一行小字，不動場次卡片本身，也不會讓版面跳動。
+function setAvailabilityRefreshing_(on) {
+  const el = document.getElementById('availabilityNote');
+  if (!el) return;
+  if (on) { el.textContent = '更新中…'; el.style.color = 'var(--ink-soft)'; el.style.display = 'block'; }
+  else if (el.textContent === '更新中…') { el.style.display = 'none'; el.textContent = ''; }
+}
+function setAvailabilityStale_(backendMessage) {
+  const el = document.getElementById('availabilityNote');
+  if (!el) return;
+  el.textContent = '更新失敗，以下為先前取得的名額' + (backendMessage ? '：' + backendMessage : '，請稍後重新整理');
+  el.style.color = 'var(--danger)';
+  el.style.display = 'block';
 }
 
 // 場次載入失敗時的重試 UI。只在「畫面上還沒有任何可用場次」時才顯示，
@@ -1671,14 +1718,24 @@ let adminLoadError = { core: '', employees: '', items: '', selfPay: '', history:
 // 核心資料：總覽（dashboard）與名冊（roster）需要的一切。
 // rosterInit 後端已經把 dashboard + roster + depts + capacities 合併成一支，
 // 而且在後端只讀一次「報名資料」工作表，所以這裡不再另外呼叫 dashboard / roster / departments。
+// 「最後更新」時間：只有 rosterInit 真的成功回來才會更新。
+// 刻意不是開頁時間、不是快取建立時間、不是 request 發出時間、也不是 loading 開始時間。
+// lastAdminCoreRefreshAt 是 visibilitychange 的節流用記號（request 開始就記），兩者用途不同，不可混用。
+let lastRosterSuccessAt = null;
+let coreRefreshInFlight = false;   // 防止重新整理被連點而送出多支 request
+
 function refreshAdminCore() {
+  if (coreRefreshInFlight) return Promise.resolve(null); // 已有一支在飛，直接忽略
+  coreRefreshInFlight = true;
   adminLoadState.core = 'loading';
   adminLoadError.core = '';
   lastAdminCoreRefreshAt = Date.now();
   renderCurrentAdminView();
+  renderDashboardMeta();
   // 唯讀查詢，連線失敗時最多自動重試 2 次
   return callApiRead({ action: 'rosterInit', token: adminToken, dept: '' }).then(res => {
     if (res && res.success) {
+      lastRosterSuccessAt = Date.now();   // ← 只有這裡會更新「最後更新」時間
       adminCache.registrations = res.rows || [];
       adminCache.depts = res.depts || [];
       const capMap = {};
@@ -1687,6 +1744,7 @@ function refreshAdminCore() {
       adminLoadState.core = 'ok';
       persistAdminCache();
     } else {
+      // 失敗時完全不動 adminCache：畫面上既有的總覽／名冊原樣保留，只標示這次沒更新成功
       adminLoadState.core = 'error';
       adminLoadError.core = (res && res.message) ? res.message : '資料載入失敗';
     }
@@ -1695,8 +1753,53 @@ function refreshAdminCore() {
     adminLoadState.core = 'error';
     adminLoadError.core = '連線失敗，請確認網路後再試一次';
     renderCurrentAdminView();
+  }).finally(() => {
+    coreRefreshInFlight = false;
+    renderDashboardMeta();
   });
 }
+
+// 總覽上方那一列「最後更新 / 狀態 / 重新整理」。
+// 只讀狀態、不打任何 API，可以隨時安全呼叫。
+function renderDashboardMeta() {
+  const at = document.getElementById('dashUpdatedAt');
+  const st = document.getElementById('dashRefreshState');
+  const btn = document.getElementById('dashRefreshBtn');
+  if (!at || !st || !btn) return;
+  at.textContent = '最後更新：' + (lastRosterSuccessAt
+    ? new Date(lastRosterSuccessAt).toLocaleTimeString('zh-TW', { hour12: false })
+    : '—');
+  if (coreRefreshInFlight) {
+    st.textContent = '更新中…';
+    st.style.color = 'var(--ink-soft)';
+  } else if (adminLoadState.core === 'error') {
+    st.textContent = '更新失敗，顯示的是先前資料：' + (adminLoadError.core || '');
+    st.style.color = 'var(--danger)';
+  } else {
+    st.textContent = '';
+  }
+  btn.disabled = coreRefreshInFlight;                 // request 期間停用，防連點
+  btn.textContent = coreRefreshInFlight ? '更新中…' : '重新整理';
+}
+
+// 總覽 skeleton：沒有任何 cache 時先畫出與真實卡片同尺寸的灰塊，
+// 使用者不會看到 3 秒空白，資料回來後直接替換，版面也不會大幅跳動。
+function renderDashboardSkeleton() {
+  const statRow = document.getElementById('statRow');
+  const grid = document.getElementById('dashGrid');
+  if (statRow) statRow.innerHTML = Array.from({ length: 3 }, () =>
+    `<div class="skel-stat"><div class="skel-line" style="height:22px;width:60%;margin-bottom:8px;"></div>
+       <div class="skel-line" style="height:11px;width:80%;"></div></div>`).join('');
+  if (grid) grid.innerHTML = Array.from({ length: 6 }, () =>
+    `<div class="skel-card"><div class="skel-line" style="height:17px;width:55%;margin-bottom:10px;"></div>
+       <div class="skel-line" style="height:10px;width:100%;margin-bottom:8px;"></div>
+       <div class="skel-line" style="height:13px;width:70%;"></div></div>`).join('');
+}
+
+document.getElementById('dashRefreshBtn').addEventListener('click', () => {
+  if (coreRefreshInFlight) return;        // 第二道防連點（按鈕本身也已 disabled）
+  refreshAdminCore();                      // 不 reload 整頁、不登出、不清空目前總覽
+});
 
 // 次要資料：每一支各自獨立 then/catch，互不影響，也不會影響核心資料。
 // 任何一支失敗都只把自己的狀態標成 error，其他區塊照常運作。
@@ -1819,7 +1922,17 @@ function renderCurrentAdminView() {
     : dep.key === 'items' ? adminCache.items
     : dep.key === 'selfPay' ? adminCache.selfPayItems
     : adminCache.historyBatches;
-  if (data == null) { renderAdminSectionStatus(currentAdminView, dep); return; }
+  if (data == null) {
+    // 總覽還沒有任何資料：載入中就畫 skeleton（不要空白等待），真的失敗才顯示錯誤與重試
+    if (currentAdminView === 'dashboard' && adminLoadState.core !== 'error') {
+      renderDashboardSkeleton();
+      renderDashboardMeta();
+      return;
+    }
+    renderAdminSectionStatus(currentAdminView, dep);
+    if (currentAdminView === 'dashboard') renderDashboardMeta();
+    return;
+  }
 
   // unregistered 同時需要 employees 與核心報名資料，兩者都到齊才畫得出來。
   // 狀態訊息必須畫在「未報名提醒」自己的容器，不能寫到名冊的容器（那是另一個分頁）。
@@ -1828,7 +1941,7 @@ function renderCurrentAdminView() {
     return;
   }
 
-  if (currentAdminView === 'dashboard') renderDashboard(computeDashboard());
+  if (currentAdminView === 'dashboard') { renderDashboard(computeDashboard()); renderDashboardMeta(); }
   else if (currentAdminView === 'roster') renderRosterView();
   else if (currentAdminView === 'settings') renderSettingsList(computeDashboard());
   else if (currentAdminView === 'employees') renderEmployeesAdmin();
@@ -1923,12 +2036,43 @@ function loadRoster() { renderRosterView(); } // 名稱沿用，實際上不再�
 document.getElementById('deptFilter').addEventListener('change', loadRoster);
 document.getElementById('refreshRoster').addEventListener('click', () => refreshAdminCore());
 
+// ---------- 眷屬 → 所屬員工（完全依據 M 欄 relation，不做任何推測） ----------
+// 規則與後端完全一致，是唯一權威來源：
+//   本人列：M 欄 = 自己的身分證字號
+//   眷屬列：M 欄 = 所屬員工（本人）的身分證字號
+// 絕不用姓名／同姓／部門／電話推測關聯，也不在前端另建一套對照。
+// 身分證字號比對前先做與後端 normalizeIdNumber_ 完全相同的正規化。
+function normalizeIdForMatch_(v) {
+  return String(v == null ? '' : v).replace(/[\s\-]/g, '').trim().toUpperCase();
+}
+// 對照表一律用「完整的 adminCache.registrations」建立，不是用畫面上已篩選的 rows，
+// 否則依部門篩選時，眷屬與本人被分到不同結果集就會查不到所屬員工。
+function buildMainNameByIdMap_() {
+  const map = {};
+  (adminCache.registrations || []).forEach(r => {
+    if (String(r.identity || '本人').trim() !== '本人') return;
+    const id = normalizeIdForMatch_(r.idNumber);
+    if (!id) return;
+    map[id] = String(r.name || '').trim();   // key 是身分證字號，同名員工不會互相干擾
+  });
+  return map;
+}
+function mainEmployeeLabel_(r, map) {
+  if (String(r.identity || '本人').trim() === '本人') return '—';
+  const key = normalizeIdForMatch_(r.mainIdNumber);
+  const name = key ? map[key] : '';
+  return name ? name : '找不到所屬員工';  // 查不到就據實顯示，絕不猜測也不自動修正
+}
+
 function renderRoster(rows) {
   const wrap = document.getElementById('rosterTableWrap');
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的報名紀錄</div>'; return; }
-  wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>身份</th><th>部門</th><th>身份證字號</th><th>出生日期</th><th>手機</th><th>早餐</th><th>日期</th><th>方案</th><th>自費項目</th><th>備註</th><th>更改日期</th><th>操作</th></tr></thead>
+  const mainNameById = buildMainNameByIdMap_();
+  wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>身份</th><th>所屬員工</th><th>部門</th><th>身份證字號</th><th>出生日期</th><th>手機</th><th>早餐</th><th>日期</th><th>方案</th><th>自費項目</th><th>備註</th><th>更改日期</th><th>操作</th></tr></thead>
     <tbody>${rows.map((r,idx) => `<tr>
-      <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity||'本人')}</td><td>${escapeHtml(r.dept)}</td>
+      <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity||'本人')}</td>
+      <td${mainEmployeeLabel_(r, mainNameById) === '找不到所屬員工' ? ' style="color:var(--danger);font-weight:700;"' : ''}>${escapeHtml(mainEmployeeLabel_(r, mainNameById))}</td>
+      <td>${escapeHtml(r.dept)}</td>
       <td>${escapeHtml(r.idNumber||'—')}</td><td>${escapeHtml(r.birthDate||'—')}</td>
       <td>${escapeHtml(r.phone||'—')}</td><td>${escapeHtml(r.breakfast||'—')}</td>
       <td>${escapeHtml(formatDateForDisplay(r))}</td>
@@ -1978,9 +2122,10 @@ function renderRoster(rows) {
         busyText: '儲存中...',
         payload: { action: 'changeDate', token: adminToken, timestamp: r.timestamp, idNumber: r.idNumber, newDate, newOtherDate },
         onSuccess: (res) => {
-          // 等後端成功才重新向後端取整包最新資料，不在前端猜測結果
+          // 改期會讓後端重算 N／O 欄與名額，前端無法精準預測結果，所以仍然向後端重新取一次整包。
+          // 但公開頁名額不再額外打一趟 API，改成讓本地快取失效即可（省一趟往返）。
           refreshAdminCore();
-          loadAvailability({ forceRefresh: true }); // 首頁場次名額立即更新
+          invalidateAvailabilityLocalCache_();
           alert(res.message || '已更改');
         }
       });
@@ -1995,9 +2140,22 @@ function renderRoster(rows) {
         busyText: '刪除中...',
         payload: { action: 'deleteRegistration', token: adminToken, timestamp: r.timestamp, idNumber: r.idNumber },
         onSuccess: () => {
-          // 刪除成功後才重新抓資料；失敗（例如本人尚有眷屬）畫面完全不動
-          refreshAdminCore();
-          loadAvailability({ forceRefresh: true });
+          // 只有後端明確回報成功才會走到這裡（失敗——例如本人尚有眷屬——畫面完全不動）。
+          //
+          // 原本這裡打兩支完整 API（rosterInit + availability），加上刪除本身共 3 趟往返。
+          // 改成：後端成功之後，用「我們送出去的同一組定位鍵」把該列從本地 cache 精準移除。
+          // 這不是樂觀更新——資料是後端刪掉之後才移除的，而且刪的是同一筆（timestamp + 身分證字號），
+          // 不是猜測。總覽的人數由 computeDashboard() 依 adminCache.registrations 在前端重算，
+          // 不需要再向後端要一次。
+          const delTime = new Date(r.timestamp).getTime();
+          const delId = normalizeIdForMatch_(r.idNumber);
+          adminCache.registrations = (adminCache.registrations || []).filter(x =>
+            !(new Date(x.timestamp).getTime() === delTime && normalizeIdForMatch_(x.idNumber) === delId));
+          persistAdminCache();
+          renderCurrentAdminView();
+          // 公開頁的名額快取已經不準了，但管理員此刻不在報名頁，不值得為它多打一趟 API。
+          // 直接讓本地快取失效，下次真的開報名頁時自然會重新取得最新名額。
+          invalidateAvailabilityLocalCache_();
         }
       });
     });
