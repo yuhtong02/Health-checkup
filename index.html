@@ -461,6 +461,51 @@
 </div>
 
 <script>
+// ============================================================
+// ⚠️ 暫時性診斷程式碼（找出「後台按重新整理會跳回首頁」的原因用）
+// 只輸出 console.log，不改變任何行為、不阻止 unload、不 alert、不 popup。
+// 找到原因後應整段移除。絕不輸出 adminToken 內容，只記錄有／無。
+// ============================================================
+console.log('[PAGE LOAD]', new Date().toISOString(), 'href=', location.href);
+window.addEventListener('beforeunload', function () {
+  // 只要看到這一行，就代表整個 document 真的要卸載／重載（情況 A）；
+  // 沒有這一行卻回到首頁，代表只是 view 的 active 狀態被改掉（情況 B）。
+  console.log('[REFRESH] BEFOREUNLOAD', new Date().toISOString());
+});
+window.addEventListener('pagehide', function (e) {
+  console.log('[REFRESH] PAGEHIDE persisted=', e.persisted, new Date().toISOString());
+});
+window.addEventListener('error', function (e) {
+  console.log('[REFRESH] WINDOW ERROR', e && e.message, e && e.filename, e && e.lineno);
+});
+window.addEventListener('unhandledrejection', function (e) {
+  console.log('[REFRESH] UNHANDLED REJECTION', e && e.reason && (e.reason.message || e.reason));
+});
+// 每次呼叫都把「目前畫面狀態」拍一張快照，用來比對 refresh 前後有沒有被改掉
+function __refreshSnap(tag) {
+  try {
+    var sg = document.getElementById('signup');
+    var ad = document.getElementById('admin');
+    var ac = document.getElementById('adminContent');
+    var pg = document.getElementById('pinGate');
+    console.log('[REFRESH] ' + tag, {
+      href: location.href,
+      visibility: document.visibilityState,
+      signupClass: sg ? sg.className : '(none)',
+      adminClass: ad ? ad.className : '(none)',
+      adminContentDisplay: ac ? ac.style.display : '(none)',
+      pinGateDisplay: pg ? pg.style.display : '(none)',
+      currentAdminView: (typeof currentAdminView !== 'undefined') ? currentAdminView : '(undef)',
+      hasAdminToken: (typeof adminToken !== 'undefined') ? !!adminToken : '(undef)',   // 只記有／無，不輸出內容
+      hasAdminCache: (typeof adminCache !== 'undefined') ? !!(adminCache && adminCache.registrations) : '(undef)',
+      regCount: (typeof adminCache !== 'undefined' && adminCache && adminCache.registrations) ? adminCache.registrations.length : null,
+      lastRosterSuccessAt: (typeof lastRosterSuccessAt !== 'undefined') ? lastRosterSuccessAt : '(undef)',
+      inFlight: (typeof coreRefreshInFlight !== 'undefined') ? coreRefreshInFlight : '(undef)'
+    });
+  } catch (err) { console.log('[REFRESH] snap error', err && err.message); }
+}
+// ============================================================
+
 // ===== 這裡改成你自己的 Apps Script 部署網址 =====
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyF1jlPOFB6bdXfj6wuFWo3YMjtSO_O40X1NDUfbS0fcx1grC37wRg4J-fGGAguPjTpdQ/exec";
 // ==================================================
@@ -1738,6 +1783,7 @@ function refreshAdminCore(opts) {
   // 這個記號是 visibilitychange 的節流用，不是「最後更新時間」。
   // 手動 force 刷新時把它重設，等於明確解除節流，下一次切回分頁也不會被誤擋。
   lastAdminCoreRefreshAt = Date.now();
+  __refreshSnap('before request force=' + !!(opts && opts.force));   // 暫時性診斷
   renderCurrentAdminView();
   renderDashboardMeta();
   // 唯讀查詢，連線失敗時最多自動重試 2 次
@@ -1751,19 +1797,23 @@ function refreshAdminCore(opts) {
       adminCache.capacitiesConfig = capMap;
       adminLoadState.core = 'ok';
       persistAdminCache();
+      __refreshSnap('success rows=' + (res.rows ? res.rows.length : 0));   // 暫時性診斷
     } else {
       // 失敗時完全不動 adminCache：畫面上既有的總覽／名冊原樣保留，只標示這次沒更新成功
       adminLoadState.core = 'error';
       adminLoadError.core = (res && res.message) ? res.message : '資料載入失敗';
     }
     renderCurrentAdminView();
-  }).catch(() => {
+    __refreshSnap('render complete');   // 暫時性診斷
+  }).catch((err) => {
+    __refreshSnap('catch ' + (err && err.message));   // 暫時性診斷
     adminLoadState.core = 'error';
     adminLoadError.core = '連線失敗，請確認網路後再試一次';
     renderCurrentAdminView();
   }).finally(() => {
     coreRefreshInFlight = false;
     renderDashboardMeta();
+    __refreshSnap('finally');   // 暫時性診斷
   });
 }
 
@@ -1826,6 +1876,7 @@ function renderDashboardSkeleton() {
 //   2. handler 內 preventDefault + stopPropagation，阻斷任何隱含的預設行為與外層 click 冒泡。
 // 這兩道都不改變任何正常情況下的行為，只把「非預期導覽」的可能性關掉。
 function handleAdminRefreshClick_(e) {
+  __refreshSnap('click  target=' + (e && e.target ? (e.target.id || e.target.className) : '?'));   // 暫時性診斷
   if (e) { e.preventDefault(); e.stopPropagation(); }
   if (coreRefreshInFlight) return false;   // 第二道防連點（按鈕本身也已 disabled）
   // force：明確要求「現在就去後端拿最新的」，不受 visibilitychange 的 60 秒節流影響
