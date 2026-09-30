@@ -1385,8 +1385,18 @@ document.getElementById('appendSubmitBtn').addEventListener('click', () => {
   const btn = document.getElementById('appendSubmitBtn');
   btn.disabled = true; btn.textContent = '送出中…';
   // 只送 token，本人身分證字號由後端用 token 取回後寫入眷屬 M 欄
+  console.log('[DEP] submit persons=' + persons.length + ' hasToken=' + !!appendToken);   // 暫時性診斷
   callApi({ action: 'appendDependents', payload: { token: appendToken, persons, note: '' } })
     .then(res => {
+      // 暫時性診斷：只輸出安全欄位，不輸出完整 res（避免任何個資／token 外流）
+      console.log('[DEP] append response', {
+        success: !!(res && res.success),
+        message: (res && res.message) || '',
+        tokenExpired: !!(res && res.tokenExpired),
+        ineligible: !!(res && res.ineligible),
+        eligibilityStatus: (res && res.eligibilityStatus) || '',
+        full: !!(res && res.full)
+      });
       btn.disabled = false; btn.textContent = '確認追加';
       if (res.tokenExpired) { resetAppendSearch(res.message); return; }
       if (res.success) {
@@ -1539,8 +1549,18 @@ document.getElementById('confirmSubmitBtn').addEventListener('click', () => {
   confirmBtn.disabled = true; confirmBtn.textContent = '送出中…';
   btn.disabled = true; btn.textContent = '送出中…';
 
+  console.log('[DEP] submit persons=' + (pendingPayload.persons || []).length +
+    ' identities=' + (pendingPayload.persons || []).map(p => p.identity).join(','));   // 暫時性診斷
   callApi({ action: 'submit', payload: pendingPayload })
     .then(res => {
+      // 暫時性診斷：只輸出安全欄位，不輸出完整 res
+      console.log('[DEP] submit response', {
+        success: !!(res && res.success),
+        message: (res && res.message) || '',
+        ineligible: !!(res && res.ineligible),
+        eligibilityStatus: (res && res.eligibilityStatus) || '',
+        full: !!(res && res.full)
+      });
       document.getElementById('confirmModal').style.display = 'none';
       confirmBtn.disabled = false; confirmBtn.textContent = '確認送出';
       if (res.success) {
@@ -1704,7 +1724,26 @@ document.querySelector('.tab-btn[data-page="admin"]').addEventListener('click', 
   if (!adminToken) tryRestoreAdminSession();
 });
 
+// 目前所在的後台分頁。只存分頁名稱（例如 'roster'），不含任何個資，
+// 用途單純是 F5／瀏覽器重新載入後能回到同一個分頁。
+const ADMIN_VIEW_STORAGE_KEY = 'hc_admin_view_v1';
 let currentAdminView = 'dashboard';
+function persistAdminView_() {
+  try { sessionStorage.setItem(ADMIN_VIEW_STORAGE_KEY, currentAdminView); } catch (e) {}
+}
+// 切換到指定後台分頁（與點擊分頁列做完全相同的事），供 F5 還原使用
+function activateAdminView_(view) {
+  const tab = document.querySelector('.admin-tab[data-view="' + view + '"]');
+  const panel = document.getElementById(view + 'View');
+  if (!tab || !panel) return false;   // 名稱不合法就不動，維持預設的總覽
+  document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.admin-view').forEach(v => v.style.display = 'none');
+  tab.classList.add('active');
+  panel.style.display = 'block';
+  currentAdminView = view;
+  document.body.classList.toggle('admin-wide', currentAdminView === 'employees');
+  return true;
+}
 document.querySelectorAll('.admin-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
@@ -1712,6 +1751,7 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     tab.classList.add('active');
     document.getElementById(tab.dataset.view + 'View').style.display = 'block';
     currentAdminView = tab.dataset.view;
+    persistAdminView_();
     document.body.classList.toggle('admin-wide', currentAdminView === 'employees');
     renderCurrentAdminView(); // 直接從記憶體 cache 渲染，不打 API，接近瞬間顯示
   });
@@ -3553,6 +3593,38 @@ document.getElementById('exportScheduleBtn').addEventListener('click', () => {
     alert('連線失敗，請稍後再試一次');
   });
 });
+
+// ---------- F5／瀏覽器重新載入後恢復管理後台 ----------
+// 問題：靜態 HTML 的 #signup 預設就是 class="view active"，所以整頁重載一定回到報名頁，
+// 即使管理員本來正在後台操作。這一段只負責「重載後把畫面切回後台」，不改任何登入機制。
+//
+// 安全邊界（完全沿用既有機制，沒有放寬任何一項）：
+//   ・仍以既有的 adminToken / localStorage session 為唯一依據，且要通過 30 分鐘閒置檢查
+//     （tryRestoreAdminSession 內部判斷，本函式不自己解讀 session）
+//   ・PIN 從頭到尾不儲存在任何地方
+//   ・admin session 仍在 localStorage、adminCache 仍在 sessionStorage，兩者位置都沒有改變
+//   ・後端 session TTL 沒有延長
+//   ・沒有繞過 adminLogin：token 必須是先前真的登入成功後由後端發出的
+//   ・還原後第一支 API 若回 sessionExpired，callApi 會呼叫 logoutAdmin() 顯示 PIN 畫面
+//   ・只有 sessionStorage 內「分頁名稱」一項是新增的持久化，不含任何個資
+function restoreAdminOnReload_() {
+  try {
+    if (!localStorage.getItem(ADMIN_SESSION_KEY)) return;  // 沒有 session 就維持在報名頁
+    if (!tryRestoreAdminSession()) return;                 // 逾時／格式錯誤會自行 clear 並回 false
+    // 到這裡代表 session 還在有效期內：把主分頁切到管理後台
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const adminTabBtn = document.querySelector('.tab-btn[data-page="admin"]');
+    if (adminTabBtn) adminTabBtn.classList.add('active');
+    document.getElementById('admin').classList.add('active');
+    // 再回到重載前所在的後台分頁（取不到或名稱不合法就留在預設的總覽）
+    let saved = '';
+    try { saved = sessionStorage.getItem(ADMIN_VIEW_STORAGE_KEY) || ''; } catch (e) {}
+    if (saved && saved !== 'dashboard') activateAdminView_(saved);
+    renderCurrentAdminView();
+  } catch (e) { /* 任何意外都不要影響報名頁正常運作 */ }
+}
+restoreAdminOnReload_();
 
 // ---------- 首頁啟動順序 ----------
 // 「各場次名額參考」是同仁最先要看、也最在意的資訊，所以 availability 仍然第一個起跑，
