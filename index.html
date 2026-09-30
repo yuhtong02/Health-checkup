@@ -461,51 +461,6 @@
 </div>
 
 <script>
-// ============================================================
-// ⚠️ 暫時性診斷程式碼（找出「後台按重新整理會跳回首頁」的原因用）
-// 只輸出 console.log，不改變任何行為、不阻止 unload、不 alert、不 popup。
-// 找到原因後應整段移除。絕不輸出 adminToken 內容，只記錄有／無。
-// ============================================================
-console.log('[PAGE LOAD]', new Date().toISOString(), 'href=', location.href);
-window.addEventListener('beforeunload', function () {
-  // 只要看到這一行，就代表整個 document 真的要卸載／重載（情況 A）；
-  // 沒有這一行卻回到首頁，代表只是 view 的 active 狀態被改掉（情況 B）。
-  console.log('[REFRESH] BEFOREUNLOAD', new Date().toISOString());
-});
-window.addEventListener('pagehide', function (e) {
-  console.log('[REFRESH] PAGEHIDE persisted=', e.persisted, new Date().toISOString());
-});
-window.addEventListener('error', function (e) {
-  console.log('[REFRESH] WINDOW ERROR', e && e.message, e && e.filename, e && e.lineno);
-});
-window.addEventListener('unhandledrejection', function (e) {
-  console.log('[REFRESH] UNHANDLED REJECTION', e && e.reason && (e.reason.message || e.reason));
-});
-// 每次呼叫都把「目前畫面狀態」拍一張快照，用來比對 refresh 前後有沒有被改掉
-function __refreshSnap(tag) {
-  try {
-    var sg = document.getElementById('signup');
-    var ad = document.getElementById('admin');
-    var ac = document.getElementById('adminContent');
-    var pg = document.getElementById('pinGate');
-    console.log('[REFRESH] ' + tag, {
-      href: location.href,
-      visibility: document.visibilityState,
-      signupClass: sg ? sg.className : '(none)',
-      adminClass: ad ? ad.className : '(none)',
-      adminContentDisplay: ac ? ac.style.display : '(none)',
-      pinGateDisplay: pg ? pg.style.display : '(none)',
-      currentAdminView: (typeof currentAdminView !== 'undefined') ? currentAdminView : '(undef)',
-      hasAdminToken: (typeof adminToken !== 'undefined') ? !!adminToken : '(undef)',   // 只記有／無，不輸出內容
-      hasAdminCache: (typeof adminCache !== 'undefined') ? !!(adminCache && adminCache.registrations) : '(undef)',
-      regCount: (typeof adminCache !== 'undefined' && adminCache && adminCache.registrations) ? adminCache.registrations.length : null,
-      lastRosterSuccessAt: (typeof lastRosterSuccessAt !== 'undefined') ? lastRosterSuccessAt : '(undef)',
-      inFlight: (typeof coreRefreshInFlight !== 'undefined') ? coreRefreshInFlight : '(undef)'
-    });
-  } catch (err) { console.log('[REFRESH] snap error', err && err.message); }
-}
-// ============================================================
-
 // ===== 這裡改成你自己的 Apps Script 部署網址 =====
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyF1jlPOFB6bdXfj6wuFWo3YMjtSO_O40X1NDUfbS0fcx1grC37wRg4J-fGGAguPjTpdQ/exec";
 // ==================================================
@@ -1385,18 +1340,8 @@ document.getElementById('appendSubmitBtn').addEventListener('click', () => {
   const btn = document.getElementById('appendSubmitBtn');
   btn.disabled = true; btn.textContent = '送出中…';
   // 只送 token，本人身分證字號由後端用 token 取回後寫入眷屬 M 欄
-  console.log('[DEP] submit persons=' + persons.length + ' hasToken=' + !!appendToken);   // 暫時性診斷
   callApi({ action: 'appendDependents', payload: { token: appendToken, persons, note: '' } })
     .then(res => {
-      // 暫時性診斷：只輸出安全欄位，不輸出完整 res（避免任何個資／token 外流）
-      console.log('[DEP] append response', {
-        success: !!(res && res.success),
-        message: (res && res.message) || '',
-        tokenExpired: !!(res && res.tokenExpired),
-        ineligible: !!(res && res.ineligible),
-        eligibilityStatus: (res && res.eligibilityStatus) || '',
-        full: !!(res && res.full)
-      });
       btn.disabled = false; btn.textContent = '確認追加';
       if (res.tokenExpired) { resetAppendSearch(res.message); return; }
       if (res.success) {
@@ -1549,18 +1494,8 @@ document.getElementById('confirmSubmitBtn').addEventListener('click', () => {
   confirmBtn.disabled = true; confirmBtn.textContent = '送出中…';
   btn.disabled = true; btn.textContent = '送出中…';
 
-  console.log('[DEP] submit persons=' + (pendingPayload.persons || []).length +
-    ' identities=' + (pendingPayload.persons || []).map(p => p.identity).join(','));   // 暫時性診斷
   callApi({ action: 'submit', payload: pendingPayload })
     .then(res => {
-      // 暫時性診斷：只輸出安全欄位，不輸出完整 res
-      console.log('[DEP] submit response', {
-        success: !!(res && res.success),
-        message: (res && res.message) || '',
-        ineligible: !!(res && res.ineligible),
-        eligibilityStatus: (res && res.eligibilityStatus) || '',
-        full: !!(res && res.full)
-      });
       document.getElementById('confirmModal').style.display = 'none';
       confirmBtn.disabled = false; confirmBtn.textContent = '確認送出';
       if (res.success) {
@@ -1823,7 +1758,6 @@ function refreshAdminCore(opts) {
   // 這個記號是 visibilitychange 的節流用，不是「最後更新時間」。
   // 手動 force 刷新時把它重設，等於明確解除節流，下一次切回分頁也不會被誤擋。
   lastAdminCoreRefreshAt = Date.now();
-  __refreshSnap('before request force=' + !!(opts && opts.force));   // 暫時性診斷
   renderCurrentAdminView();
   renderDashboardMeta();
   // 唯讀查詢，連線失敗時最多自動重試 2 次
@@ -1837,23 +1771,19 @@ function refreshAdminCore(opts) {
       adminCache.capacitiesConfig = capMap;
       adminLoadState.core = 'ok';
       persistAdminCache();
-      __refreshSnap('success rows=' + (res.rows ? res.rows.length : 0));   // 暫時性診斷
     } else {
       // 失敗時完全不動 adminCache：畫面上既有的總覽／名冊原樣保留，只標示這次沒更新成功
       adminLoadState.core = 'error';
       adminLoadError.core = (res && res.message) ? res.message : '資料載入失敗';
     }
     renderCurrentAdminView();
-    __refreshSnap('render complete');   // 暫時性診斷
-  }).catch((err) => {
-    __refreshSnap('catch ' + (err && err.message));   // 暫時性診斷
+  }).catch(() => {
     adminLoadState.core = 'error';
     adminLoadError.core = '連線失敗，請確認網路後再試一次';
     renderCurrentAdminView();
   }).finally(() => {
     coreRefreshInFlight = false;
     renderDashboardMeta();
-    __refreshSnap('finally');   // 暫時性診斷
   });
 }
 
@@ -1907,16 +1837,18 @@ function renderDashboardSkeleton() {
        <div class="skel-line" style="height:13px;width:70%;"></div></div>`).join('');
 }
 
-// 後台所有「重新整理」共用的 handler。
-// 真人測試回報「按下去會跳回首頁」。靜態檢查已排除程式層原因（全檔沒有 form 元素、沒有 location.*、
-// 沒有 .reload()、沒有 history.*、DOM 巢狀平衡、刷新路徑不會切換 .view），
-// 因此對「瀏覽器層的隱含送出」做完整防禦：
-//   1. 所有靜態 <button> 一律補上 type="button"（原本 26 個都沒有）。預設 type 是 submit，
+// 後台所有「重新整理」共用的 handler（總覽與名冊兩顆按鈕都用這一支）。
+//
+// 曾懷疑這顆按鈕會讓畫面跳回報名頁，runtime 診斷已證實「按鈕本身完全正常」
+// （click → before request → success → render → finally 全數正常，主分頁狀態不變）；
+// 真正的現象是使用者按 F5／瀏覽器重新整理造成整頁重載，已由 restoreAdminOnReload_() 處理。
+//
+// 以下兩道防禦在診斷期間加入，屬於本來就該有的正確寫法，因此保留：
+//   1. 所有靜態 <button> 一律有 type="button"。預設 type 是 submit，
 //      在某些 App 內建瀏覽器／密碼管理員注入 form 的情況下會變成送出並導覽。
-//   2. handler 內 preventDefault + stopPropagation，阻斷任何隱含的預設行為與外層 click 冒泡。
-// 這兩道都不改變任何正常情況下的行為，只把「非預期導覽」的可能性關掉。
+//   2. handler 內 preventDefault + stopPropagation，阻斷隱含的預設行為與外層 click 冒泡。
+// 兩者都不改變正常情況下的行為。
 function handleAdminRefreshClick_(e) {
-  __refreshSnap('click  target=' + (e && e.target ? (e.target.id || e.target.className) : '?'));   // 暫時性診斷
   if (e) { e.preventDefault(); e.stopPropagation(); }
   if (coreRefreshInFlight) return false;   // 第二道防連點（按鈕本身也已 disabled）
   // force：明確要求「現在就去後端拿最新的」，不受 visibilitychange 的 60 秒節流影響
