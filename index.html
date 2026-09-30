@@ -193,8 +193,8 @@
       <p class="sub">若攜帶眷屬同行，可在表單中新增眷屬並各自選擇檢查日期，不需要跟同仁同一天。</p>
     </div>
     <div class="tabs">
-      <button class="tab-btn active" data-page="signup">同仁報名</button>
-      <button class="tab-btn" data-page="admin">管理後台</button>
+      <button type="button" class="tab-btn active" data-page="signup">同仁報名</button>
+      <button type="button" class="tab-btn" data-page="admin">管理後台</button>
     </div>
   </header>
 
@@ -225,15 +225,15 @@
             <div class="hint">請輸入完整的出生年月日（民國年）。例如民國 86 年 6 月 12 日，就選 86／6／12。</div>
           </div>
         </div>
-        <button class="btn ghost" id="appendSearchBtn">查詢本人報名資料</button>
+        <button type="button" class="btn ghost" id="appendSearchBtn">查詢本人報名資料</button>
         <div id="appendSearchMsg"></div>
       </div>
       <div id="appendFoundArea" style="display:none;">
         <div class="msg ok" id="appendFoundInfo"></div>
-        <button class="btn ghost small" id="appendAddDepBtn" style="margin-top:10px;">＋ 追加眷屬</button>
+        <button type="button" class="btn ghost small" id="appendAddDepBtn" style="margin-top:10px;">＋ 追加眷屬</button>
         <div id="appendPersonsContainer" style="margin-top:10px;"></div>
         <div id="appendSubmitArea" style="display:none;margin-top:14px;">
-          <button class="btn" id="appendSubmitBtn">確認追加</button>
+          <button type="button" class="btn" id="appendSubmitBtn">確認追加</button>
         </div>
         <div id="appendMsg"></div>
       </div>
@@ -249,8 +249,8 @@
       <div style="font-weight:700;margin-bottom:14px;">請確認報名資料</div>
       <div id="confirmSummary"></div>
       <div style="display:flex;gap:10px;margin-top:16px;">
-        <button class="btn" id="confirmSubmitBtn" style="flex:1;">確認送出</button>
-        <button class="btn ghost" id="confirmCancelBtn" style="flex:1;">返回修改</button>
+        <button type="button" class="btn" id="confirmSubmitBtn" style="flex:1;">確認送出</button>
+        <button type="button" class="btn ghost" id="confirmCancelBtn" style="flex:1;">返回修改</button>
       </div>
     </div>
   </div>
@@ -264,7 +264,7 @@
         <input type="password" id="pinInput" placeholder="請輸入管理密碼" maxlength="10" style="width:100%;box-sizing:border-box;padding-right:40px;">
         <button type="button" id="pinToggle" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;padding:4px;">👁</button>
       </div>
-        <button class="btn" id="pinSubmit" style="margin-top:12px;width:100%;">登入</button>
+        <button type="button" class="btn" id="pinSubmit" style="margin-top:12px;width:100%;">登入</button>
         <div id="pinMsg"></div>
       </div>
     </div>
@@ -285,7 +285,7 @@
         <div class="dash-meta">
           <span id="dashUpdatedAt" class="hint" style="margin:0;">最後更新：—</span>
           <span id="dashRefreshState" class="hint" style="margin:0;"></span>
-          <button class="btn ghost small" id="dashRefreshBtn" style="margin-left:auto;">重新整理</button>
+          <button type="button" class="btn ghost small" id="dashRefreshBtn" style="margin-left:auto;">重新整理</button>
         </div>
         <div id="statRow" class="stat-row"></div>
         <div id="dashGrid" class="grid"></div>
@@ -294,9 +294,10 @@
       <div id="rosterView" class="admin-view" style="display:none;">
         <div class="toolbar">
           <select id="deptFilter"><option value="">全部部門</option></select>
-          <button class="btn ghost small" id="refreshRoster">重新整理</button>
-          <button class="btn small" id="exportBtn">匯出 Excel</button>
-          <button class="btn small" id="exportScheduleBtn">輸出健檢時程表</button>
+          <button type="button" class="btn ghost small" id="refreshRoster">重新整理</button>
+          <span id="rosterUpdatedAt" class="hint" style="margin:0;">最後更新：—</span>
+          <button type="button" class="btn small" id="exportBtn">匯出 Excel</button>
+          <button type="button" class="btn small" id="exportScheduleBtn">輸出健檢時程表</button>
         </div>
         <div class="hint" style="margin-bottom:10px;">「匯出 Excel」是一般平鋪名冊；「輸出健檢時程表」會依健檢機構的時程表版型產生，含健檢時程表與自費金額兩張工作表。</div>
         <div id="rosterTableWrap"></div>
@@ -347,8 +348,8 @@
           <div class="field"><label>自費項目</label><input id="editSelfPay"></div>
           <div class="field"><label>備註</label><input id="editNote"></div>
           <div style="display:flex;gap:10px;margin-top:14px;">
-            <button class="btn" id="editSaveBtn" style="flex:1;">儲存</button>
-            <button class="btn ghost" id="editCancelBtn" style="flex:1;">取消</button>
+            <button type="button" class="btn" id="editSaveBtn" style="flex:1;">儲存</button>
+            <button type="button" class="btn ghost" id="editCancelBtn" style="flex:1;">取消</button>
           </div>
           <div id="editMsg"></div>
         </div>
@@ -359,7 +360,7 @@
         <div class="add-row">
           <div><label>新場次日期</label><input id="newDate" placeholder="例如：11/21（六）"></div>
           <div><label>人數上限</label><input id="newCap" type="number" min="1" value="7"></div>
-          <button class="btn" id="addDateBtn">新增場次</button>
+          <button type="button" class="btn" id="addDateBtn">新增場次</button>
         </div>
       </div>
 
@@ -368,7 +369,7 @@
           <div style="font-weight:700;margin-bottom:10px;">健檢資格設定</div>
           <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">
             <div class="field" style="margin:0;min-width:220px;"><label>資格基準日（民國年）</label><input id="eligibilityAsOfInput" placeholder="例如：115/10/31"></div>
-            <button class="btn small" id="saveEligibilityAsOfBtn">更新基準日</button>
+            <button type="button" class="btn small" id="saveEligibilityAsOfBtn">更新基準日</button>
           </div>
           <div id="eligibilityRuleHint" class="hint" style="margin-top:8px;">載入資格設定中…</div>
           <div id="eligibilityConfigMsg"></div>
@@ -381,7 +382,7 @@
           </div>
           <div class="field"><label>歸類 *</label><select id="newEmpCategory"></select></div>
           <div class="field"><label>到職日（民國年）</label><input id="newEmpHireDate" placeholder="例如：114/10/31" autocomplete="off"><div class="hint">可輸入 114/10/31；空白可先儲存，但該員工報名時會被擋下，直到補齊到職日。</div></div>
-          <button class="btn" id="addEmpBtn">新增員工</button>
+          <button type="button" class="btn" id="addEmpBtn">新增員工</button>
           <div id="addEmpMsg"></div>
         </div>
         <div class="toolbar emp-toolbar" style="margin-top:18px;">
@@ -393,9 +394,9 @@
               <option value="">全部資格</option><option value="ok">符合</option><option value="tooNew">未滿一年</option><option value="unknown">到職日待確認</option>
             </select>
           </span>
-          <button class="btn ghost small" id="refreshEmpBtn">重新整理</button>
-          <button class="btn ghost small" id="refreshEmpFromSheetBtn">從試算表更新</button>
-          <button class="btn small" id="saveAllEmpBtn">儲存全部</button>
+          <button type="button" class="btn ghost small" id="refreshEmpBtn">重新整理</button>
+          <button type="button" class="btn ghost small" id="refreshEmpFromSheetBtn">從試算表更新</button>
+          <button type="button" class="btn small" id="saveAllEmpBtn">儲存全部</button>
         </div>
         <div class="hint" style="margin-bottom:8px;">可以同時修改多位員工的姓名／部門／歸類／到職日，最後按一次「儲存全部」。只會送出真正有變更的資料。到職日建議使用民國格式 YYY/MM/DD。</div>
         <div id="empListWrap" style="overflow-x:auto;"></div>
@@ -407,12 +408,12 @@
           第三欄『歸類』：既有員工可省略，系統會保留原本設定；新進員工請務必填寫有效歸類。若姓名重複或無法判定原歸類，系統會要求人工補填，不會自動預設。
         </div>
         <textarea id="empPaste" placeholder="王小明,工務部&#10;陳小華,行政部,鈺通營造工程股份有限公司"></textarea>
-        <button class="btn" id="saveEmpBtn" style="margin-top:10px;">儲存名單並比對</button>
+        <button type="button" class="btn" id="saveEmpBtn" style="margin-top:10px;">儲存名單並比對</button>
         <div id="saveEmpMsg"></div>
         <div class="toolbar" style="margin-top:16px;">
           <select id="unregDeptFilter"><option value="">全部部門</option></select>
-          <button class="btn ghost small" id="copyReminderBtn">一鍵複製未報名提醒</button>
-          <button class="btn small" id="downloadUnregCsvBtn">下載未報名名單 CSV</button>
+          <button type="button" class="btn ghost small" id="copyReminderBtn">一鍵複製未報名提醒</button>
+          <button type="button" class="btn small" id="downloadUnregCsvBtn">下載未報名名單 CSV</button>
         </div>
         <div id="unregTableWrap" style="margin-top:12px;"></div>
       </div>
@@ -422,7 +423,7 @@
           <div style="font-weight:700;margin-bottom:8px;">上傳健檢項目照片</div>
           <div class="hint" style="margin-bottom:10px;">可一次選取多張照片，不用填寫任何欄位，選好按上傳即可。</div>
           <input type="file" id="itemImageFiles" accept="image/*" multiple>
-          <button class="btn" id="uploadItemsBtn" style="margin-top:12px;">上傳照片</button>
+          <button type="button" class="btn" id="uploadItemsBtn" style="margin-top:12px;">上傳照片</button>
           <div id="itemMsg"></div>
         </div>
         <div id="itemsListWrap" style="margin-top:18px;"></div>
@@ -435,7 +436,7 @@
             <div class="field"><label>項目名稱</label><input id="selfPayName" placeholder="例如：頸動脈超音波"></div>
             <div class="field"><label>優惠價</label><input id="selfPayPrice" type="number" min="0" placeholder="1530"></div>
           </div>
-          <button class="btn" id="addSelfPayBtn">新增項目</button>
+          <button type="button" class="btn" id="addSelfPayBtn">新增項目</button>
           <div id="selfPayMsg"></div>
         </div>
         <div id="selfPayListWrap" style="margin-top:18px;"></div>
@@ -447,7 +448,7 @@
           <div class="hint" style="margin-bottom:10px;">系統要重複使用（例如下一年度健檢）時，先把目前的報名資料封存成一個梯次，封存後目前名冊會清空、可以重新開始收單，但資料不會遺失，之後隨時可以在下方查閱或匯出。</div>
           <div style="display:flex;gap:8px;">
             <input id="archiveBatchName" placeholder="例如：115年度健檢" style="flex:1;">
-            <button class="btn danger" id="archiveBtn">封存並清空目前名冊</button>
+            <button type="button" class="btn danger" id="archiveBtn">封存並清空目前名冊</button>
           </div>
           <div id="archiveMsg"></div>
         </div>
@@ -1724,11 +1725,18 @@ let adminLoadError = { core: '', employees: '', items: '', selfPay: '', history:
 let lastRosterSuccessAt = null;
 let coreRefreshInFlight = false;   // 防止重新整理被連點而送出多支 request
 
-function refreshAdminCore() {
+// opts.force：手動按「重新整理」時使用。
+// 它的意義只有一個——「無論 visibilitychange 的 60 秒節流如何，都要真的向後端拿一次最新 rosterInit」。
+// 它不會、也不可以繞過 coreRefreshInFlight（那是防連點，避免同時送出重複 request）。
+// 注意：rosterInit 本身從來就不吃任何後端快取，每次都直接重讀試算表，所以只要這一支真的送出去，
+// 拿到的就一定是最新資料（含其他裝置剛完成的報名與眷屬）。
+function refreshAdminCore(opts) {
   if (coreRefreshInFlight) return Promise.resolve(null); // 已有一支在飛，直接忽略
   coreRefreshInFlight = true;
   adminLoadState.core = 'loading';
   adminLoadError.core = '';
+  // 這個記號是 visibilitychange 的節流用，不是「最後更新時間」。
+  // 手動 force 刷新時把它重設，等於明確解除節流，下一次切回分頁也不會被誤擋。
   lastAdminCoreRefreshAt = Date.now();
   renderCurrentAdminView();
   renderDashboardMeta();
@@ -1761,14 +1769,27 @@ function refreshAdminCore() {
 
 // 總覽上方那一列「最後更新 / 狀態 / 重新整理」。
 // 只讀狀態、不打任何 API，可以隨時安全呼叫。
+function lastUpdatedLabel_() {
+  return '最後更新：' + (lastRosterSuccessAt
+    ? new Date(lastRosterSuccessAt).toLocaleTimeString('zh-TW', { hour12: false })
+    : '—');
+}
 function renderDashboardMeta() {
+  // 名冊分頁也要看得到同一個「最後更新」，管理員才知道手上的名冊是不是最新的
+  const rAt = document.getElementById('rosterUpdatedAt');
+  if (rAt) {
+    rAt.textContent = lastUpdatedLabel_() + (coreRefreshInFlight ? '（更新中…）' : '');
+  }
+  const rBtn = document.getElementById('refreshRoster');
+  if (rBtn) {
+    rBtn.disabled = coreRefreshInFlight;
+    rBtn.textContent = coreRefreshInFlight ? '更新中…' : '重新整理';
+  }
   const at = document.getElementById('dashUpdatedAt');
   const st = document.getElementById('dashRefreshState');
   const btn = document.getElementById('dashRefreshBtn');
   if (!at || !st || !btn) return;
-  at.textContent = '最後更新：' + (lastRosterSuccessAt
-    ? new Date(lastRosterSuccessAt).toLocaleTimeString('zh-TW', { hour12: false })
-    : '—');
+  at.textContent = lastUpdatedLabel_();
   if (coreRefreshInFlight) {
     st.textContent = '更新中…';
     st.style.color = 'var(--ink-soft)';
@@ -1796,10 +1817,22 @@ function renderDashboardSkeleton() {
        <div class="skel-line" style="height:13px;width:70%;"></div></div>`).join('');
 }
 
-document.getElementById('dashRefreshBtn').addEventListener('click', () => {
-  if (coreRefreshInFlight) return;        // 第二道防連點（按鈕本身也已 disabled）
-  refreshAdminCore();                      // 不 reload 整頁、不登出、不清空目前總覽
-});
+// 後台所有「重新整理」共用的 handler。
+// 真人測試回報「按下去會跳回首頁」。靜態檢查已排除程式層原因（全檔沒有 form 元素、沒有 location.*、
+// 沒有 .reload()、沒有 history.*、DOM 巢狀平衡、刷新路徑不會切換 .view），
+// 因此對「瀏覽器層的隱含送出」做完整防禦：
+//   1. 所有靜態 <button> 一律補上 type="button"（原本 26 個都沒有）。預設 type 是 submit，
+//      在某些 App 內建瀏覽器／密碼管理員注入 form 的情況下會變成送出並導覽。
+//   2. handler 內 preventDefault + stopPropagation，阻斷任何隱含的預設行為與外層 click 冒泡。
+// 這兩道都不改變任何正常情況下的行為，只把「非預期導覽」的可能性關掉。
+function handleAdminRefreshClick_(e) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  if (coreRefreshInFlight) return false;   // 第二道防連點（按鈕本身也已 disabled）
+  // force：明確要求「現在就去後端拿最新的」，不受 visibilitychange 的 60 秒節流影響
+  refreshAdminCore({ force: true });       // 不 reload、不改 location、不切分頁、不登出、不清 cache
+  return false;
+}
+document.getElementById('dashRefreshBtn').addEventListener('click', handleAdminRefreshClick_);
 
 // 次要資料：每一支各自獨立 then/catch，互不影響，也不會影響核心資料。
 // 任何一支失敗都只把自己的狀態標成 error，其他區塊照常運作。
@@ -1942,7 +1975,7 @@ function renderCurrentAdminView() {
   }
 
   if (currentAdminView === 'dashboard') { renderDashboard(computeDashboard()); renderDashboardMeta(); }
-  else if (currentAdminView === 'roster') renderRosterView();
+  else if (currentAdminView === 'roster') { renderRosterView(); renderDashboardMeta(); }
   else if (currentAdminView === 'settings') renderSettingsList(computeDashboard());
   else if (currentAdminView === 'employees') renderEmployeesAdmin();
   else if (currentAdminView === 'unregistered') renderUnregisteredView();
@@ -2034,7 +2067,10 @@ function renderRosterView() {
 }
 function loadRoster() { renderRosterView(); } // 名稱沿用，實際上不再打 API，直接從 cache 渲染
 document.getElementById('deptFilter').addEventListener('change', loadRoster);
-document.getElementById('refreshRoster').addEventListener('click', () => refreshAdminCore());
+// 名冊的「重新整理」與總覽共用同一個 handler：同樣 preventDefault、同樣 force、同樣防連點。
+// 成功後 refreshAdminCore 會更新 adminCache.registrations 並重畫目前分頁，
+// 名冊會用新的 registrations 重新建立 M relation 對照表，新報名的眷屬因此立即出現。
+document.getElementById('refreshRoster').addEventListener('click', handleAdminRefreshClick_);
 
 // ---------- 眷屬 → 所屬員工（完全依據 M 欄 relation，不做任何推測） ----------
 // 規則與後端完全一致，是唯一權威來源：
