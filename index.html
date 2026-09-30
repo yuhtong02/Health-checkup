@@ -708,7 +708,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 let availability = [];
 
 const AVAILABILITY_CACHE_KEY = 'hc_availability_cache_v1';
-const AVAILABILITY_CACHE_TTL = 45000; // 45 秒，落在需求的 30~60 秒區間
+// 10 分鐘。原本 45 秒，但同仁是一整天零星進站，兩次造訪幾乎不可能間隔小於 45 秒，
+// 下面的本地快取預先繪製形同從未生效。放寬後回訪者可立即看到場次；背景仍一定重新呼叫
+// API 並覆蓋，實際名額檢查也一律在後端 LockService 內重讀試算表，不依賴這份前端快取。
+const AVAILABILITY_CACHE_TTL = 600000;
 
 // 場次名額：優先載入，不等待照片。若有未過期的本地快取，先立即顯示，
 // 同時一定會在背景重新呼叫 API 更新，畫面上看到的名額最終仍以後端回傳為準。
@@ -756,33 +759,27 @@ function showAvailabilityLoadError(backendMessage) {
   }
 }
 
-// 健檢項目照片：有本地快取就先立即顯示，背景只查輕量的 itemsVersion；
-// 版本相同就不再呼叫完整的 getItems，只有版本不同（或第一次進站、沒有快取）才會整包重抓。
+// 健檢項目照片：有本地快取就先立即顯示，然後一律在背景抓一次完整清單。
+//
+// 原本是「先查輕量的 itemsVersion，版本不同才再抓 getItems」。那個做法省下的是後端的
+// Sheet I/O（便宜的部分），付出的卻是一整趟 Apps Script 往返（貴的部分）：
+//   ・版本相同 → 白白多花一趟往返，幾乎沒省到
+//   ・版本不同 → 1 趟變成 2 趟「串行」，照片反而更慢出現
+// 改成直接抓 getItems 之後，最壞情況就是 1 趟，最好情況只是多傳一點 JSON。
+// 快取內容、render 時機、callApiRead 的重試與錯誤處理都由 fetchFullItems_() 維持原樣。
 function loadItemsAsync() {
-  let cachedVersion = null;
-  let hasCache = false;
   try {
     const cached = JSON.parse(localStorage.getItem(ITEMS_CACHE_KEY) || 'null');
     if (cached && (Date.now() - cached.ts) < ITEMS_CACHE_MAX_AGE) {
       healthItems = cached.items || [];
-      cachedVersion = cached.version;
-      hasCache = true;
-      renderItems();
+      renderItems(); // 先用快取立即顯示，不等 API
     }
   } catch (e) { /* 忽略壞掉的快取內容 */ }
 
-  if (!hasCache) {
-    // 第一次進站、或本地快取已經過期超過 24 小時：直接抓完整清單
-    fetchFullItems_();
-    return;
-  }
-
-  // 有快取：先問一個很輕量的版本號，版本沒變就完全不用重新抓圖片清單
-  callApiRead({ action: 'itemsVersion' }).then(res => {
-    const version = res && res.version;
-    if (version === cachedVersion) return; // 版本相同，省下一次 getItems
-    fetchFullItems_();
-  }).catch(() => { /* 版本查詢失敗就沿用目前畫面上的快取內容，不強制整包重抓 */ });
+  // 一律重新取完整清單（唯讀查詢，失敗時 callApiRead 仍會自動重試最多 2 次）。
+  // 抓失敗時 fetchFullItems_() 只在「畫面上還沒有任何照片」時才隱藏照片區，
+  // 所以上面已經用快取畫出來的內容不會被清掉。
+  fetchFullItems_();
 }
 
 // 只把本地快取的照片畫出來，完全不連線。用於首屏，讓照片不必等名額 API。
