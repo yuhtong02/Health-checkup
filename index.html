@@ -20,9 +20,39 @@
      先前寫的 body.admin-wide #adminCard 是死規則——HTML 裡根本沒有 id="adminCard" 的元素，
      所以完全沒有作用。這裡改成對實際存在的每一層都解除寬度限制。 */
   body.admin-wide .wrap{max-width:1560px;width:calc(100% - 24px);}
+  /* 外框（.wrap → #admin → #adminContent → 各 .admin-view）在所有後台分頁一律寬版，
+     切換分頁時標題、分頁導覽列、左右邊界都不會跳動。 */
   body.admin-wide #admin,
   body.admin-wide #adminContent,
-  body.admin-wide #employeesView{max-width:none;width:100%;}
+  body.admin-wide .admin-view{max-width:none;width:100%;}
+
+  /* 外框統一之後，內容仍要維持好讀的尺寸——只有表格類需要吃滿寬度，
+     卡片／清單類在寬版下靠左排列並設上限，不被硬拉成一整排超寬元素。 */
+  @media(min-width:1100px){
+    /* 總覽：三張統計卡維持原本比例，不隨外框變寬而各自撐成 500px */
+    body.admin-wide #dashboardView .stat-row{max-width:760px;}
+    /* 場次設定：用寬版內容區的 82%，右側不再留下大片空白，
+       但仍保留一點邊距避免整列貼齊邊緣。場次列表與下方「新增場次」同屬 #settingsView，
+       因此兩者寬度自動對齊。 */
+    body.admin-wide #settingsView{max-width:82%;}
+    /* 容器變寬後，.settings-row 既有的 flex 配置會自動讓「日期」那一格（.grow）吃掉
+       多出來的空間，人數上限 input（inline width:80px）與兩顆按鈕維持原本大小靠右收齊，
+       不會被拉長，所以這裡不需要再加任何欄寬規則。 */
+    /* 未報名提醒：與總覽一樣吃滿寬版內容區，上方貼上區與工具列自然變寬 */
+    body.admin-wide #unregisteredView{max-width:none;}
+    /* 名單欄位配置：四個欄位合計約佔內容區 70~75%，右側留一段空白，
+       既不會全部擠在左半邊，也不會撐滿整列而讓姓名與狀態離得太遠。
+       前一版用固定上限（200/340px），在 1560px 寬版下四欄只佔約 47%，右側空太多，
+       改成 fr 比例後會隨容器一起成長，但由最後一條空軌道吃掉約 1/4 的寬度。
+       .unreg-row 只有 4 個子元素，第 5 條軌道永遠是空的，純粹用來收尾。
+       每一列的分隔線畫在 .unreg-row 本身（grid 容器 100% 寬），不受欄寬配置影響。 */
+    body.admin-wide #unregisteredView .unreg-row{
+      grid-template-columns:60px minmax(130px,1fr) minmax(190px,1.9fr) 110px minmax(0,1.35fr);}
+    /* 歷史紀錄的梯次清單同理（展開後的名冊表格仍可自行水平捲動） */
+    body.admin-wide #historyBatchList{max-width:900px;}
+  }
+  /* #dashGrid、#itemsListWrap、#selfPayListWrap 用的是 auto-fill grid，
+     變寬只會每列多放幾張卡，單張卡尺寸不變，因此不需要額外限制。 */
   /* 欄位最小寬度改用 class 管理。原本寫成 inline style，inline 的優先權高於任何樣式表規則，
      所以寬版 CSS 永遠蓋不掉它，這正是桌機仍然出現橫向捲軸的原因。 */
   .emp-table{min-width:980px;}
@@ -37,6 +67,39 @@
     body.admin-wide #employeesView td select{width:100%;min-width:0;}
     body.admin-wide #employeesView th,
     body.admin-wide #employeesView td{padding:8px 9px;}
+  }
+
+  /* ---------- 名冊（管理後台 → 名冊）桌機寬版 ----------
+     沿用員工管理既有的 body.admin-wide 做法，不另外發明一套。
+     只影響 #rosterView 內的 .roster-table，其他後台分頁完全不受影響。 */
+  .roster-table{min-width:1400px;}                 /* 窄螢幕／手機：維持原本的水平捲動 */
+  /* 短欄位一律單行：中文預設可逐字斷行，欄寬不足時就會變成「一個字一行」，
+     這裡明確禁止換行，欄寬由 table-layout:auto 依內容分配。 */
+  .roster-table th:nth-child(1), .roster-table td:nth-child(1),   /* 姓名 */
+  .roster-table th:nth-child(2), .roster-table td:nth-child(2),   /* 身份（本人／眷屬） */
+  .roster-table th:nth-child(3), .roster-table td:nth-child(3),   /* 所屬員工 */
+  .roster-table th:nth-child(5), .roster-table td:nth-child(5),   /* 身分證字號 */
+  .roster-table th:nth-child(6), .roster-table td:nth-child(6),   /* 出生日期 */
+  .roster-table th:nth-child(7), .roster-table td:nth-child(7),   /* 手機 */
+  .roster-table th:nth-child(8), .roster-table td:nth-child(8),   /* 早餐 */
+  .roster-table th:nth-child(9), .roster-table td:nth-child(9),   /* 日期 */
+  .roster-table th:nth-child(10), .roster-table td:nth-child(10)  /* 方案 */
+  {white-space:nowrap;}
+  /* 部門可能較長，允許換行但不逐字拆：以詞／標點為斷點 */
+  .roster-table td:nth-child(4){word-break:keep-all;overflow-wrap:break-word;}
+  /* 自費項目與備註是長文字，分配剩餘空間並正常換行 */
+  .roster-table .col-selfpay,
+  .roster-table .col-note{font-size:12px;white-space:normal;word-break:break-word;}
+  .roster-table .col-selfpay{min-width:200px;}
+  .roster-table .col-note{min-width:140px;}
+  @media(min-width:1100px){
+    /* 桌機寬螢幕：解除固定最小寬度，改由內容自動分配，盡量不需要左右拖動 */
+    body.admin-wide #rosterView .roster-table{min-width:0;width:100%;table-layout:auto;}
+    body.admin-wide #rosterView th,
+    body.admin-wide #rosterView td{padding:8px 9px;}
+    /* 長文字欄吃掉剩餘空間，短欄位才不會被壓到換行 */
+    body.admin-wide #rosterView .roster-table .col-selfpay{width:22%;}
+    body.admin-wide #rosterView .roster-table .col-note{width:14%;}
   }
   /* 員工管理工具列：置頂固定。
      原本寫 background:var(--card)，但 :root 從來沒有定義過 --card，
@@ -715,6 +778,9 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById(btn.dataset.page).classList.add('active');
+    // 寬版只屬於管理後台。切回「同仁報名」時必須移除，否則報名頁會跟著被撐成 1560px。
+    // （syncAdminWide_ 定義在後面，但這裡是 click 當下才執行，屆時整份 script 已載入完畢。）
+    syncAdminWide_();
   });
 });
 
@@ -1661,6 +1727,18 @@ document.querySelector('.tab-btn[data-page="admin"]').addEventListener('click', 
 
 // 目前所在的後台分頁。只存分頁名稱（例如 'roster'），不含任何個資，
 // 用途單純是 F5／瀏覽器重新載入後能回到同一個分頁。
+// 使用桌機寬版外框的後台分頁＝全部。
+// 原本只有員工管理與名冊是寬版，切換分頁時整個頁面會忽胖忽瘦、左右跳動。
+// 統一成寬版之後，外框／標題／分頁列的位置在所有分頁都一致。
+// 注意：這只統一「外框」；各分頁內容若會被拉得過寬，另由下方 CSS 個別設 max-width 控制。
+const ADMIN_WIDE_VIEWS = ['dashboard', 'roster', 'settings', 'employees', 'unregistered', 'items', 'selfpay', 'history'];
+// 寬版只在「管理後台」這個主分頁啟用；切回同仁報名頁一定要移除。
+function syncAdminWide_() {
+  const adminEl = document.getElementById('admin');
+  const adminActive = !!(adminEl && adminEl.classList.contains('active'));
+  document.body.classList.toggle('admin-wide',
+    adminActive && ADMIN_WIDE_VIEWS.indexOf(currentAdminView) !== -1);
+}
 const ADMIN_VIEW_STORAGE_KEY = 'hc_admin_view_v1';
 let currentAdminView = 'dashboard';
 function persistAdminView_() {
@@ -1676,7 +1754,7 @@ function activateAdminView_(view) {
   tab.classList.add('active');
   panel.style.display = 'block';
   currentAdminView = view;
-  document.body.classList.toggle('admin-wide', currentAdminView === 'employees');
+  syncAdminWide_();
   return true;
 }
 document.querySelectorAll('.admin-tab').forEach(tab => {
@@ -1687,7 +1765,7 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     document.getElementById(tab.dataset.view + 'View').style.display = 'block';
     currentAdminView = tab.dataset.view;
     persistAdminView_();
-    document.body.classList.toggle('admin-wide', currentAdminView === 'employees');
+    syncAdminWide_();
     renderCurrentAdminView(); // 直接從記憶體 cache 渲染，不打 API，接近瞬間顯示
   });
 });
@@ -2123,21 +2201,42 @@ function mainEmployeeLabel_(r, map) {
   return name ? name : '找不到所屬員工';  // 查不到就據實顯示，絕不猜測也不自動修正
 }
 
+// 名冊「部門」欄的顯示格式。純顯示層：接收原始字串、回傳 HTML 片段，
+// 不修改 r.dept、不修改 adminCache、不影響部門篩選、不影響其他任何畫面。
+//
+// 規則：只有以「營建部-」開頭的部門才拆成兩行（連字號後面的工地／單位名稱放第二行）。
+//   營建部-林森圖書館 → 營建部 / 林森圖書館
+//   營建部-主管       → 營建部 / 主管
+//   營建部（無連字號）→ 維持單行
+//   管理部、稽核室…   → 完全不處理
+// 同時接受半形 "-" 與全形 "－"（Sheet 可能用中文輸入法打出全形）。
+// 前後兩段都各自經過 escapeHtml，XSS 防護與原本完全相同；<br> 是我們自己產生的常數，非使用者輸入。
+const ROSTER_DEPT_SPLIT_PREFIX = '營建部';
+function deptDisplayHtml_(dept) {
+  const s = String(dept == null ? '' : dept);
+  if (s.indexOf(ROSTER_DEPT_SPLIT_PREFIX) !== 0) return escapeHtml(s);  // 不是營建部開頭 → 原樣單行
+  const sep = s.charAt(ROSTER_DEPT_SPLIT_PREFIX.length);
+  if (sep !== '-' && sep !== '－') return escapeHtml(s);                 // 沒有連字號 → 原樣單行
+  const rest = s.slice(ROSTER_DEPT_SPLIT_PREFIX.length + 1);
+  if (!rest) return escapeHtml(s);                                      // 連字號後面是空的 → 原樣單行
+  return escapeHtml(ROSTER_DEPT_SPLIT_PREFIX) + '<br>' + escapeHtml(rest);
+}
+
 function renderRoster(rows) {
   const wrap = document.getElementById('rosterTableWrap');
   if (rows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有符合條件的報名紀錄</div>'; return; }
   const mainNameById = buildMainNameByIdMap_();
-  wrap.innerHTML = `<table><thead><tr><th>姓名</th><th>身份</th><th>所屬員工</th><th>部門</th><th>身份證字號</th><th>出生日期</th><th>手機</th><th>早餐</th><th>日期</th><th>方案</th><th>自費項目</th><th>備註</th><th>更改日期</th><th>操作</th></tr></thead>
+  wrap.innerHTML = `<table class="roster-table"><thead><tr><th>姓名</th><th>身份</th><th>所屬員工</th><th>部門</th><th>身份證字號</th><th>出生日期</th><th>手機</th><th>早餐</th><th>日期</th><th>方案</th><th>自費項目</th><th>備註</th><th>更改日期</th><th>操作</th></tr></thead>
     <tbody>${rows.map((r,idx) => `<tr>
       <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.identity||'本人')}</td>
       <td${mainEmployeeLabel_(r, mainNameById) === '找不到所屬員工' ? ' style="color:var(--danger);font-weight:700;"' : ''}>${escapeHtml(mainEmployeeLabel_(r, mainNameById))}</td>
-      <td>${escapeHtml(r.dept)}</td>
+      <td>${deptDisplayHtml_(r.dept)}</td>
       <td>${escapeHtml(r.idNumber||'—')}</td><td>${escapeHtml(r.birthDate||'—')}</td>
       <td>${escapeHtml(r.phone||'—')}</td><td>${escapeHtml(r.breakfast||'—')}</td>
       <td>${escapeHtml(formatDateForDisplay(r))}</td>
       <td>${escapeHtml(r.plan||'—')}</td>
-      <td style="max-width:180px;font-size:12px;">${escapeHtml(r.selfPay||'—')}</td>
-      <td style="max-width:160px;font-size:12px;">${escapeHtml(r.note||'—')}</td>
+      <td class="col-selfpay">${escapeHtml(r.selfPay||'—')}</td>
+      <td class="col-note">${escapeHtml(r.note||'—')}</td>
       <td>
         <select class="dateChangeSelect" data-idx="${idx}" style="padding:4px 6px;font-size:12px;">
           ${currentDateOptions.map(d => `<option value="${escapeHtml(d)}" ${d===r.date?'selected':''}>${escapeHtml(d)}</option>`).join('')}
@@ -3553,6 +3652,7 @@ function restoreAdminOnReload_() {
     let saved = '';
     try { saved = sessionStorage.getItem(ADMIN_VIEW_STORAGE_KEY) || ''; } catch (e) {}
     if (saved && saved !== 'dashboard') activateAdminView_(saved);
+    syncAdminWide_();   // 還原到總覽時也要套用寬版外框
     renderCurrentAdminView();
   } catch (e) { /* 任何意外都不要影響報名頁正常運作 */ }
 }
