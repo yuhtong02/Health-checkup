@@ -179,6 +179,17 @@
   @media(max-width:520px){.loading.reserve{min-height:122px;}}
   @media(max-width:430px){.loading.reserve{min-height:112px;}}
   .hint{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  /* 員工管理：資格人數統計（小標籤列，不撐大版面） */
+  .emp-elig-stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+  .emp-elig-stats .es{background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:5px 11px;font-size:12.5px;color:var(--ink-soft);}
+  .emp-elig-stats .es b{color:var(--ink);font-size:14px;margin-left:4px;}
+  .emp-elig-stats .es.warn b{color:var(--danger);}
+  /* 未報名提醒：三類切換標籤 */
+  .unreg-tabs{display:flex;flex-wrap:wrap;gap:8px;}
+  .unreg-tabs button{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:700;color:var(--ink-soft);cursor:pointer;font-family:inherit;}
+  .unreg-tabs button b{margin-left:4px;color:var(--ink);}
+  .unreg-tabs button.active{background:var(--primary);border-color:var(--primary);color:#fff;}
+  .unreg-tabs button.active b{color:#fff;}
   /* 總覽的「最後更新／重新整理」列：低調不搶眼，手機可換行 */
   .dash-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
   /* 總覽 skeleton：沒有 cache 時先畫出與真實卡片同尺寸的灰塊，避免空白等待與版面跳動 */
@@ -435,6 +446,7 @@
             <button type="button" class="btn small" id="saveEligibilityAsOfBtn">更新基準日</button>
           </div>
           <div id="eligibilityRuleHint" class="hint" style="margin-top:8px;">載入資格設定中…</div>
+          <div id="empEligStats" class="emp-elig-stats"></div>
           <div id="eligibilityConfigMsg"></div>
         </div>
         <div class="panel">
@@ -473,7 +485,8 @@
         <textarea id="empPaste" placeholder="王小明,工務部&#10;陳小華,行政部,鈺通營造工程股份有限公司"></textarea>
         <button type="button" class="btn" id="saveEmpBtn" style="margin-top:10px;">儲存名單並比對</button>
         <div id="saveEmpMsg"></div>
-        <div class="toolbar" style="margin-top:16px;">
+        <div id="unregTabs" class="unreg-tabs" style="margin-top:16px;"></div>
+        <div class="toolbar" style="margin-top:10px;">
           <select id="unregDeptFilter"><option value="">全部部門</option></select>
           <button type="button" class="btn ghost small" id="copyReminderBtn">一鍵複製未報名提醒</button>
           <button type="button" class="btn small" id="downloadUnregCsvBtn">下載未報名名單 CSV</button>
@@ -966,6 +979,7 @@ function loadEmployeesAsync() {
     employeeList = (res && res.employees) || [];
     if (res && res.eligibilityAsOf) publicEligibilityAsOf = res.eligibilityAsOf;
     refreshDeptSelectIfPresent();
+    evaluateMainEligibility_(true);   // 名單晚到時，補判定使用者已輸入的身分
   }).catch(() => {});
 }
 function loadSelfPayItemsAsync() {
@@ -984,6 +998,82 @@ function refreshDeptSelectIfPresent() {
   const current = sel.value;
   sel.innerHTML = '<option value="">請選擇部門</option>' + depts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('') + '<option value="__other__">其他（手動輸入）</option>';
   if (depts.includes(current)) sel.value = current;
+}
+
+// ---------- 本人健檢資格：身分確認後就決定能不能繼續填寫 ----------
+// 資格判定一律採用後端 employeesPublic 回傳的 eligibilityStatus（ok / tooNew / missing / invalid），
+// 前端不做任何日期換算。對照方式與後端 findEmployeeForEligibility_ 相同：
+//   先比「姓名＋部門」，找不到時只有在姓名唯一時才採用；同名多人一律視為無法確認。
+// ⚠️ 這只是提早擋下，真正的防線仍是後端 submitRegistration_／appendDependents_ 內的
+//    checkMainEligibilityOrFail_，前端被繞過也無法寫入。
+const MAIN_INELIGIBLE_MSG_TOO_NEW = '您目前到職未滿一年，不符合本次健檢報名資格。';
+const MAIN_INELIGIBLE_MSG_UNKNOWN = '您的到職日資料未完整或格式不正確，目前無法確認健檢資格，請聯絡管理人員確認後再報名。';
+const MAIN_NOT_FOUND_HINT = '在員工名單中找不到您的唯一資料，送出時系統將無法確認資格。請確認姓名與部門是否正確，或聯絡管理人員。';
+let mainEligibilityBlocked = false;
+
+function findPublicEmployee_(name, dept) {
+  if (!name) return null;
+  const exact = employeeList.filter(e => e.name === name && e.dept === dept);
+  if (exact.length >= 1) return exact[0];
+  const byName = employeeList.filter(e => e.name === name);
+  return byName.length === 1 ? byName[0] : null;
+}
+
+// showNotFound：只在離開欄位／名單載入時提示「查無唯一員工」，打字過程中不提示
+function evaluateMainEligibility_(showNotFound) {
+  if (mainPersonId === null) return;
+  const nameEl = document.getElementById(`p${mainPersonId}_name`);
+  const deptSel = document.getElementById(`p${mainPersonId}_dept`);
+  const eligEl = document.getElementById(`p${mainPersonId}_eligibility`);
+  if (!nameEl || !deptSel) return;
+  const name = nameEl.value.trim();
+  const dept = deptSel.value === '__other__'
+    ? (document.getElementById(`p${mainPersonId}_dept_other`).value || '').trim() : deptSel.value;
+
+  // 名單尚未載入（或載入失敗）時不阻擋：交給後端在送出時判定，避免合格同仁被誤擋
+  if (!name || employeeList.length === 0) {
+    setMainEligibilityLock_(false);
+    if (eligEl) eligEl.innerHTML = '';
+    return;
+  }
+  const emp = findPublicEmployee_(name, dept);
+  if (!emp) {
+    setMainEligibilityLock_(false);     // 查無唯一員工：只提示，最終由後端在送出時阻擋
+    if (eligEl) eligEl.innerHTML = showNotFound ? '<div class="msg err">' + escapeHtml(MAIN_NOT_FOUND_HINT) + '</div>' : '';
+    return;
+  }
+  const status = String(emp.eligibilityStatus || '');
+  if (status === 'ok') {
+    setMainEligibilityLock_(false);
+    if (eligEl) eligEl.innerHTML = '';
+    return;
+  }
+  // tooNew／missing／invalid：身分已確認但不符合（或無法確認）資格 → 停止填寫
+  setMainEligibilityLock_(true);
+  if (eligEl) eligEl.innerHTML = '<div class="msg err">' +
+    escapeHtml(status === 'tooNew' ? MAIN_INELIGIBLE_MSG_TOO_NEW : MAIN_INELIGIBLE_MSG_UNKNOWN) + '</div>';
+}
+
+// 鎖定：本人卡片只保留姓名／部門（讓使用者能更正身分），其餘欄位、所有眷屬卡片、
+// 新增眷屬、備註與確認報名全部停用。只解除「由本函式停用的」元素（data-elig-locked 標記），
+// 不會誤把原本就停用的元素（例如已報名後的確認按鈕）重新打開。
+function setMainEligibilityLock_(locked) {
+  mainEligibilityBlocked = locked;
+  const area = document.getElementById('formArea');
+  if (!area) return;
+  const keep = new Set([`p${mainPersonId}_name`, `p${mainPersonId}_dept`, `p${mainPersonId}_dept_other`]);
+  if (locked) {
+    area.querySelectorAll('input, select, textarea, button').forEach(el => {
+      if (keep.has(el.id) || el.disabled) return;
+      el.disabled = true;
+      el.setAttribute('data-elig-locked', '1');
+    });
+  } else {
+    area.querySelectorAll('[data-elig-locked="1"]').forEach(el => {
+      el.disabled = false;
+      el.removeAttribute('data-elig-locked');
+    });
+  }
 }
 
 // ---------- 多人員報名表單 ----------
@@ -1114,22 +1204,21 @@ function addPersonCard(identity) {
     document.getElementById(`p${id}_name`).addEventListener('input', () => {
       const val = document.getElementById(`p${id}_name`).value.trim();
       const match = employeeList.find(e => e.name === val);
-      const eligEl = document.getElementById(`p${id}_eligibility`);
       if (match) {
         const deptSel = document.getElementById(`p${id}_dept`);
         const hasOption = Array.from(deptSel.options).some(o => o.value === match.dept);
         if (hasOption) deptSel.value = match.dept;
-        if (eligEl) {
-          if (match.eligible) eligEl.innerHTML = '';
-          else if (match.eligibilityStatus === 'tooNew') eligEl.innerHTML = '<div class="msg err">依本年度健檢資格規定，截至 ' + escapeHtml(publicEligibilityAsOf) + ' 到職尚未滿一年，本年度不符合公司健檢報名資格。</div>';
-          else eligEl.innerHTML = '<div class="msg err">目前無法確認您的健檢資格，請聯絡管理人員確認員工名單的到職日。</div>';
-        }
-      } else if (eligEl) eligEl.innerHTML = '';
+      }
+      evaluateMainEligibility_(false);
     });
+    // 離開姓名欄時才提示「查無唯一員工」，避免打字打到一半就跳出錯誤
+    document.getElementById(`p${id}_name`).addEventListener('change', () => evaluateMainEligibility_(true));
     document.getElementById(`p${id}_dept`).addEventListener('change', () => {
       const other = document.getElementById(`p${id}_dept`).value === '__other__';
       document.getElementById(`p${id}_dept_other`).style.display = other ? 'block' : 'none';
+      evaluateMainEligibility_(true);   // 同名員工要靠部門區分，部門改變就重新判定
     });
+    document.getElementById(`p${id}_dept_other`).addEventListener('change', () => evaluateMainEligibility_(true));
   }
   document.getElementById(`p${id}_selfpay_add`).addEventListener('click', () => {
     const sel = document.getElementById(`p${id}_selfpay_select`);
@@ -1483,6 +1572,7 @@ function openConfirmModal() {
   const note = document.getElementById('fNote').value.trim();
 
   if (!dept) { msg.innerHTML = '<div class="msg err">請選擇部門。</div>'; return; }
+  if (mainEligibilityBlocked) { msg.innerHTML = '<div class="msg err">本人不符合本次健檢報名資格，本人與眷屬皆無法送出報名。</div>'; return; }
   if (personsState.length === 0) { msg.innerHTML = '<div class="msg err">請至少填寫一位報名人員。</div>'; return; }
 
   const persons = [];
@@ -2523,7 +2613,34 @@ let justSavedEmpRow = null;
 // 「儲存全部」進行中：同時擋住單筆儲存／刪除，避免兩個寫入互相覆蓋
 let empBatchInFlight = false;
 
+// 員工資格人數統計。完全依後端回傳的 eligibilityStatus 計數，不做任何日期換算或推測。
+//   全部員工     ＝ adminCache.employees 筆數（後端 getEmployees_ 只回傳 A 欄有姓名的有效列）
+//   應報名       ＝ eligibilityStatus === 'ok'
+//   未滿一年     ＝ eligibilityStatus === 'tooNew'
+//   資格待確認   ＝ 其餘（'missing' 到職日空白、'invalid' 格式錯誤、任何未知值）
+// 三者相加必等於全部員工。統計一律用「完整名單」，不受上方歸類／資格篩選影響。
+// 開啟員工管理、從試算表更新、儲存後重新取得名單，都會經過 renderEmployeesAdmin()，因此自動同步。
+function renderEmployeeEligibilityStats_() {
+  const el = document.getElementById('empEligStats');
+  if (!el) return;
+  const list = adminCache.employees;
+  if (!Array.isArray(list)) { el.innerHTML = ''; return; }
+  let ok = 0, tooNew = 0, unknown = 0;
+  list.forEach(e => {
+    const st = String(e.eligibilityStatus || '');
+    if (st === 'ok') ok++;
+    else if (st === 'tooNew') tooNew++;
+    else unknown++;
+  });
+  el.innerHTML =
+    '<span class="es">全部員工<b>' + list.length + '</b> 人</span>' +
+    '<span class="es">應報名<b>' + ok + '</b> 人</span>' +
+    '<span class="es">未滿一年<b>' + tooNew + '</b> 人</span>' +
+    '<span class="es' + (unknown > 0 ? ' warn' : '') + '">資格待確認<b>' + unknown + '</b> 人</span>';
+}
+
 function renderEmployeesAdmin() {
+  renderEmployeeEligibilityStats_();
   const cats = adminCache.categories || [];
   // 合法歸類清單還沒到手時，絕對不能先把表格畫出來：
   // 那會產生一個「只有『請選擇歸類』一個選項」的下拉，把已經存好的歸類蓋成空白顯示，
@@ -2857,8 +2974,25 @@ document.getElementById('saveAllEmpBtn').addEventListener('click', () => {
   });
 });
 
-let allUnregisteredRows = []; // 全部未報名（未篩選）
-let lastUnregisteredRows = []; // 目前部門篩選後的結果
+// 未報名提醒分三類，資格一律採用後端回傳的 eligibilityStatus（與員工管理統計同一套對應）：
+//   due     應報名未報名：eligibilityStatus === 'ok' 且尚未完成本人報名 → 真正需要提醒的人
+//   tooNew  未滿一年（免報名）：eligibilityStatus === 'tooNew'
+//   pending 資格待確認：其餘狀態（missing／invalid／空值／未知）
+// 「已報名」沿用既有判斷：本人報名列的「姓名＋部門」，不另做任何推測。
+// ⚠️ 一鍵複製提醒與下載 CSV 一律只使用 due（lastUnregisteredRows），
+//    不論目前切到哪一類，未滿一年與資格待確認都不會進入催報名內容。
+let allUnregisteredRows = []; // 應報名未報名（未篩選部門）——提醒／CSV 的唯一來源
+let lastUnregisteredRows = []; // 應報名未報名（已套部門篩選）——提醒／CSV 使用
+let unregTab = 'due';          // 目前顯示的分類：due | tooNew | pending
+let unregBuckets = { due: [], tooNew: [], pending: [] };
+let unregRegisteredKeys = new Set();
+let lastUnregViewRows = [];    // 目前畫面上顯示的那一類（已套部門篩選）
+function unregStatusBucket_(e) {
+  const st = String(e.eligibilityStatus || '');
+  if (st === 'ok') return 'due';
+  if (st === 'tooNew') return 'tooNew';
+  return 'pending';
+}
 function renderUnregisteredView() {
   const employees = adminCache.employees || [];
   const regs = adminCache.registrations || [];
@@ -2867,7 +3001,15 @@ function renderUnregisteredView() {
   const registeredKeys = new Set(
     regs.filter(r => r.identity === '本人').map(r => String(r.name || '').trim() + '||' + String(r.dept || '').trim())
   );
-  allUnregisteredRows = employees.filter(e => !registeredKeys.has(e.name + '||' + e.dept));
+  unregRegisteredKeys = registeredKeys;
+  unregBuckets = { due: [], tooNew: [], pending: [] };
+  employees.forEach(e => {
+    const b = unregStatusBucket_(e);
+    // 應報名只收「尚未報名」的人；未滿一年與待確認不論是否已有報名紀錄都列出，供管理者查看
+    if (b === 'due' && registeredKeys.has(e.name + '||' + e.dept)) return;
+    unregBuckets[b].push(e);
+  });
+  allUnregisteredRows = unregBuckets.due;
 
   // 部門清單從目前員工名單動態產生，不寫死
   const sel = document.getElementById('unregDeptFilter');
@@ -2880,24 +3022,58 @@ function renderUnregisteredView() {
 }
 function applyUnregisteredFilter() {
   const dept = document.getElementById('unregDeptFilter').value;
-  lastUnregisteredRows = dept ? allUnregisteredRows.filter(r => r.dept === dept) : allUnregisteredRows;
-  renderUnregisteredList(); // 純前端 filter，不會呼叫 API，切換部門幾乎瞬間完成
+  const byDept = list => dept ? list.filter(r => r.dept === dept) : list;
+  lastUnregisteredRows = byDept(allUnregisteredRows);      // 提醒／CSV 只用這份（應報名未報名）
+  lastUnregViewRows = byDept(unregBuckets[unregTab] || []);
+  renderUnregTabs_(byDept);
+  renderUnregisteredList(); // 純前端 filter，不會呼叫 API，切換部門／分類幾乎瞬間完成
+}
+// 三類切換標籤：數字依目前的部門篩選計算（選「全部部門」時即為全公司人數）
+function renderUnregTabs_(byDept) {
+  const box = document.getElementById('unregTabs');
+  if (!box) return;
+  const tabs = [
+    ['due', '應報名未報名'],
+    ['tooNew', '未滿一年（免報名）'],
+    ['pending', '資格待確認']
+  ];
+  box.innerHTML = tabs.map(([key, label]) =>
+    `<button type="button" data-unreg-tab="${key}" class="${unregTab === key ? 'active' : ''}">${label}<b>${byDept(unregBuckets[key] || []).length}</b> 人</button>`
+  ).join('');
+  box.querySelectorAll('[data-unreg-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      unregTab = btn.dataset.unregTab;
+      applyUnregisteredFilter();   // 部門篩選保留，只換顯示的分類
+    });
+  });
 }
 document.getElementById('unregDeptFilter').addEventListener('change', applyUnregisteredFilter);
 function loadUnregistered() { renderUnregisteredView(); }
 function renderUnregisteredList() {
   const wrap = document.getElementById('unregTableWrap');
-  if (lastUnregisteredRows.length === 0) { wrap.innerHTML = '<div class="empty">目前沒有名單，或篩選範圍內的人都已報名</div>'; return; }
+  const emptyMsg = unregTab === 'due' ? '目前沒有名單，或篩選範圍內應報名的人都已報名'
+    : unregTab === 'tooNew' ? '篩選範圍內沒有到職未滿一年的員工'
+    : '篩選範圍內沒有資格待確認的員工';
+  if (lastUnregViewRows.length === 0) { wrap.innerHTML = '<div class="empty">' + emptyMsg + '</div>'; return; }
+  const pillFor = r => {
+    if (unregTab === 'due') return '<span class="pill full" style="justify-self:start;">未報名</span>';
+    // 不需報名或資格待確認的人，若名冊中已有本人報名紀錄，一併標示讓管理者留意
+    const registered = unregRegisteredKeys.has(r.name + '||' + r.dept);
+    if (unregTab === 'tooNew') return registered
+      ? '<span class="pill full" style="justify-self:start;">已有報名紀錄</span>'
+      : '<span class="pill" style="justify-self:start;">免報名</span>';
+    return '<span class="pill full" style="justify-self:start;">' + (registered ? '已有報名紀錄' : '待補到職日') + '</span>';
+  };
   wrap.innerHTML = `
     <div class="unreg-row" style="font-size:11px;color:var(--ink-soft);font-weight:700;text-transform:uppercase;">
       <span>序號</span><span>姓名</span><span>部門</span><span>狀態</span>
     </div>
-    ${lastUnregisteredRows.map((r, idx) => `
+    ${lastUnregViewRows.map((r, idx) => `
       <div class="unreg-row" style="border-bottom:1px solid var(--line);">
         <span style="color:var(--ink-soft);">${idx+1}</span>
         <span style="font-weight:700;">${escapeHtml(r.name)}</span>
         <span class="unreg-dept">${escapeHtml(r.dept)}</span>
-        <span class="pill full" style="justify-self:start;">未報名</span>
+        ${pillFor(r)}
       </div>`).join('')}`;
 }
 document.getElementById('saveEmpBtn').addEventListener('click', () => {
